@@ -621,11 +621,14 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 				return nil, fmt.Errorf("run audit loop: write fix prompt: %w", err)
 			}
 
-			// Snapshot target files before the fix agent runs. If the fix is
-			// rejected, we restore from this snapshot instead of from HEAD — which
-			// may be a prior sprint's checkpoint that doesn't contain the current
-			// sprint's files.
-			preFixSnapshot := git.SnapshotFiles(opts.ProjectDir, fixContract.TargetFiles())
+			// Snapshot ALL modified files before the fix agent runs. This
+			// includes sprint deliverables that haven't been committed yet.
+			// If the fix is rejected, we restore from this snapshot instead
+			// of HEAD — which may be a prior sprint's checkpoint that doesn't
+			// contain the current sprint's files.
+			snapshotPaths, _ := git.ListModifiedFiles(ctx, opts.ProjectDir)
+			snapshotPaths = append(snapshotPaths, fixContract.TargetFiles()...)
+			preFixSnapshot := git.SnapshotFiles(opts.ProjectDir, snapshotPaths)
 
 			// Run fix agent
 			fixLogPath := filepath.Join(buildLogsDir,

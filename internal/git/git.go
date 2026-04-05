@@ -142,6 +142,44 @@ func RestoreFromSnapshot(projectDir string, snap *FileSnapshot, files []string) 
 	return unhandled, nil
 }
 
+// ListModifiedFiles returns all files in the working tree that differ from HEAD.
+// This includes tracked modifications, staged additions, and untracked files
+// (excluding .fry/). Used to snapshot the full sprint state before audit fix
+// attempts so that rollbacks don't wipe uncommitted sprint deliverables.
+func ListModifiedFiles(ctx context.Context, projectDir string) ([]string, error) {
+	// Get tracked changes (modified, added, deleted relative to HEAD)
+	status, err := DefaultExecutor.StatusPorcelain(ctx, projectDir)
+	if err != nil {
+		return nil, fmt.Errorf("list modified files: %w", err)
+	}
+	seen := make(map[string]struct{})
+	var files []string
+	for _, line := range strings.Split(status, "\n") {
+		line = strings.TrimSpace(line)
+		if len(line) < 4 {
+			continue
+		}
+		// Porcelain format: XY <space> path
+		path := strings.TrimSpace(line[2:])
+		// Handle renames: "R  old -> new"
+		if idx := strings.Index(path, " -> "); idx >= 0 {
+			path = path[idx+4:]
+		}
+		if path == "" {
+			continue
+		}
+		// Skip .fry/ artifacts
+		if strings.HasPrefix(path, ".fry/") || strings.HasPrefix(path, ".fry-config/") {
+			continue
+		}
+		if _, ok := seen[path]; !ok {
+			seen[path] = struct{}{}
+			files = append(files, path)
+		}
+	}
+	return files, nil
+}
+
 // CleanNestedGitDirs finds and removes nested .git directories that are
 // children of the project root. These are left behind by tools like
 // create-next-app and cause the parent repo to record gitlinks (mode 160000)
