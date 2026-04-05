@@ -1174,27 +1174,16 @@ var runCmd = &cobra.Command{
 						)
 					}
 					if !auditResult.Passed {
-						if auditResult.Blocked {
+						// Blocker findings are advisory — log them but do not
+						// halt the build. The fix loop already attempted remediation;
+						// blockers that couldn't be fixed are surfaced in the result
+						// for the user but do not prevent forward progress.
+						if auditResult.Blocked && len(auditResult.Blockers) > 0 {
 							blockerSummary := auditSummarizeBlockers(auditResult)
-							frlog.Log("  AUDIT: BLOCKED — %s", blockerSummary)
-							if cleanupErr := audit.Cleanup(projectPath); cleanupErr != nil {
-								frlog.Log("WARNING: audit cleanup failed: %v", cleanupErr)
-							}
-							failStatus := fmt.Sprintf("BLOCKED (audit: %s)", summarizeAuditBlockerCategories(auditResult.BlockerCounts))
+							frlog.Log("  AUDIT: advisory blockers — %s", blockerSummary)
 							mu.Lock()
-							results[sprintNum-startSprint].Status = failStatus
 							results[sprintNum-startSprint].AuditWarning = blockerSummary
 							mu.Unlock()
-							if err := sprint.AppendToEpicProgress(projectPath,
-								fmt.Sprintf("## Sprint %d: %s \u2014 %s\n\n", spr.Number, spr.Name, failStatus)); err != nil {
-								frlog.Log("warning: append epic progress: %v", err)
-							}
-							fmt.Fprintf(cmd.OutOrStdout(), "Resume:   fry run --resume --sprint %d\n", spr.Number)
-							fmt.Fprintf(cmd.OutOrStdout(), "Restart:  fry run --sprint %d\n", spr.Number)
-							fmt.Fprintf(cmd.OutOrStdout(), "Continue: fry run --continue\n")
-							exitErr = fmt.Errorf("sprint %d audit blocked: %s after %d cycles",
-								spr.Number, failStatus, auditResult.Iterations)
-							break
 						}
 						if auditResult.Blocking {
 							frlog.Log("  AUDIT: FAILED — %s remain after %d audit cycles",

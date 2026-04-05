@@ -78,9 +78,9 @@ func containsAnyHint(text string, hints []string) bool {
 
 func (f Finding) categoryOrDefault() string {
 	category := normalizeFindingCategory(f.Category)
-	if category == FindingCategoryProductDefect && strings.TrimSpace(f.Category) == "" {
-		return inferFindingCategory(f)
-	}
+	// Only trust explicit categories set by the audit agent.
+	// Inference from description keywords is too prone to false positives
+	// (e.g. "Dockerfile copies devDependencies" matching "docker" → harness_blocker).
 	return category
 }
 
@@ -97,9 +97,11 @@ func (f Finding) isFixableProductDefect(includeLow bool) bool {
 	if f.Resolved || f.Severity == "" {
 		return false
 	}
-	if f.isBlocker() {
-		return false
-	}
+	// Blocker categories are informational — they help the user understand
+	// the nature of the finding but do not prevent the fix agent from
+	// attempting remediation. The fix agent may not be able to fix
+	// environment issues, but that is handled by normal convergence
+	// (stale detection, low-yield stop) rather than pre-filtering.
 	if !includeLow && f.Severity == "LOW" {
 		return false
 	}

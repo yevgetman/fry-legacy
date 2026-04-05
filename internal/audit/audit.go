@@ -452,38 +452,6 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 
 		fixableCount := countFixableProductFindings(activeFindings, includeLow)
 
-		// Helper to build a blocked result — used by both the blocker-only
-		// exit and the harness-blocker early exit below.
-		blockedResult := func(stopReason string) *AuditResult {
-			auditMetrics.RecordCycleSummary(cycle)
-			auditMetrics.OuterCycles = cycle
-			auditMetrics.ConvergedAtCycle = cycle
-			auditMetrics.FinalFindingCount = totalSeverityCount(effectiveCounts)
-			return &AuditResult{
-				Passed:               false,
-				Blocking:             true,
-				Blocked:              true,
-				Iterations:           cycle,
-				MaxSeverity:          effectiveMaxSev,
-				SeverityCounts:       effectiveCounts,
-				UnresolvedFindings:   collectUnresolved(activeFindings),
-				SuppressedReopenings: suppressedReopenings,
-				RepeatedUnchanged:    repeatedUnchanged,
-				SuppressedUnchanged:  suppressedUnchanged,
-				ReopenedWithEvidence: reopenedWithEvidence,
-				BlockerCounts:        activeBlockerCounts,
-				Blockers:             activeBlockers,
-				Complexity:           opts.Complexity,
-				StopReason:           stopReason,
-				Metrics:              auditMetrics,
-			}
-		}
-
-		if fixableCount == 0 && len(activeBlockers) > 0 {
-			frylog.Log("  AUDIT: blocked by %d non-product findings — skipping code-fix loop", len(activeBlockers))
-			return blockedResult(lowYieldStopReason), nil
-		}
-
 		// Outer stale detection (progress-based mode only)
 		if progressBased && cycle > 1 {
 			prevKeys := findingKeySet(knownFindings)
@@ -516,9 +484,6 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 		}
 
 		frylog.Log("  AUDIT: %s — entering fix loop (%d issues)...", formatSeverityCounts(effectiveCounts), fixableCount)
-		if len(activeBlockers) > 0 {
-			frylog.Log("  AUDIT: %d blocker findings will stay out of the normal code-fix loop", len(activeBlockers))
-		}
 
 		// Sort findings FIFO for fix agent
 		sortFindingsFIFO(activeFindings)
@@ -2013,7 +1978,7 @@ func filterFixable(findings []Finding, includeLow bool) []Finding {
 func countFixable(findings []Finding, includeLow bool) int {
 	n := 0
 	for _, f := range findings {
-		if f.Severity == "" || f.isBlocker() {
+		if f.Severity == "" {
 			continue
 		}
 		if !includeLow && f.Severity == "LOW" {

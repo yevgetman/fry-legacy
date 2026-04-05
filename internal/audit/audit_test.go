@@ -2019,20 +2019,22 @@ func TestFilterFixable(t *testing.T) {
 		{Description: "Resolved low", Severity: "LOW", Resolved: true},
 	}
 
-	// Without LOW: same as filterUnresolved
+	// Without LOW: all unresolved findings above LOW regardless of category
 	withoutLow := filterFixable(findings, false)
-	assert.Len(t, withoutLow, 3)
+	assert.Len(t, withoutLow, 4)
 	assert.Equal(t, "Critical bug", withoutLow[0].Description)
 	assert.Equal(t, "High bug", withoutLow[1].Description)
 	assert.Equal(t, "Moderate issue", withoutLow[2].Description)
+	assert.Equal(t, "Missing SUPABASE_URL", withoutLow[3].Description) // blocker category is informational, doesn't exclude
 
 	// With LOW: includes unresolved LOW
 	withLow := filterFixable(findings, true)
-	assert.Len(t, withLow, 4)
+	assert.Len(t, withLow, 5)
 	assert.Equal(t, "Critical bug", withLow[0].Description)
 	assert.Equal(t, "High bug", withLow[1].Description)
 	assert.Equal(t, "Moderate issue", withLow[2].Description)
-	assert.Equal(t, "Low style", withLow[3].Description)
+	assert.Equal(t, "Missing SUPABASE_URL", withLow[3].Description)
+	assert.Equal(t, "Low style", withLow[4].Description)
 }
 
 func TestCountFixable(t *testing.T) {
@@ -2046,10 +2048,10 @@ func TestCountFixable(t *testing.T) {
 		{Description: "D", Severity: "LOW", Resolved: true},
 	}
 
-	// countFixable counts ALL findings matching severity filter (resolved or not)
-	// because it serves as the total denominator in progress logs, but it excludes blocker categories.
-	assert.Equal(t, 2, countFixable(findings, false)) // HIGH + resolved MODERATE
-	assert.Equal(t, 4, countFixable(findings, true))  // all four
+	// countFixable counts ALL findings matching severity filter (resolved or not).
+	// Blocker categories are informational and included in counts.
+	assert.Equal(t, 3, countFixable(findings, false)) // A(HIGH) + Harness(HIGH) + C(MODERATE, resolved)
+	assert.Equal(t, 5, countFixable(findings, true))  // all five including LOWs
 }
 
 func TestCountUnresolvedLow(t *testing.T) {
