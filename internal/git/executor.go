@@ -47,6 +47,12 @@ type Executor interface {
 	// File restoration
 	RestoreFiles(ctx context.Context, dir string, files []string) error
 
+	// Index operations
+	CommitCount(ctx context.Context, dir string) (int, error)
+	ReadIndexFile(ctx context.Context, dir string, relativePath string) ([]byte, error)
+	CheckoutIndexAll(ctx context.Context, dir string) error
+	ListADFiles(ctx context.Context, dir string) ([]string, error)
+
 	// Worktree operations
 	WorktreeList(ctx context.Context, dir string) ([]string, error)
 	WorktreeAdd(ctx context.Context, dir string, worktreePath, branchName string, createBranch bool) error
@@ -260,6 +266,51 @@ func (e *ExecExecutor) WorktreeAdd(ctx context.Context, dir string, worktreePath
 
 func (e *ExecExecutor) WorktreePrune(ctx context.Context, dir string) error {
 	return e.run(ctx, dir, "git", "worktree", "prune")
+}
+
+func (e *ExecExecutor) CommitCount(ctx context.Context, dir string) (int, error) {
+	out, err := e.output(ctx, dir, "git", "rev-list", "--count", "HEAD")
+	if err != nil {
+		return 0, err
+	}
+	return strconv.Atoi(strings.TrimSpace(out))
+}
+
+func (e *ExecExecutor) ReadIndexFile(ctx context.Context, dir string, relativePath string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "git", "show", ":"+relativePath)
+	cmd.Dir = dir
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if msg != "" {
+			return nil, fmt.Errorf("git show :%s: %s", relativePath, msg)
+		}
+		return nil, fmt.Errorf("git show :%s: %w", relativePath, err)
+	}
+	return stdout.Bytes(), nil
+}
+
+func (e *ExecExecutor) CheckoutIndexAll(ctx context.Context, dir string) error {
+	return e.run(ctx, dir, "git", "checkout-index", "-a", "-f")
+}
+
+func (e *ExecExecutor) ListADFiles(ctx context.Context, dir string) ([]string, error) {
+	out, err := e.output(ctx, dir, "git", "status", "--porcelain")
+	if err != nil {
+		return nil, err
+	}
+	var adFiles []string
+	for _, line := range strings.Split(out, "\n") {
+		if len(line) >= 3 && line[0] == 'A' && line[1] == 'D' {
+			path := strings.TrimSpace(line[3:])
+			if path != "" {
+				adFiles = append(adFiles, path)
+			}
+		}
+	}
+	return adFiles, nil
 }
 
 // run executes a command and returns an error with combined output on failure.

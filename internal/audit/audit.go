@@ -163,6 +163,16 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 	auditFilePath := filepath.Join(opts.ProjectDir, config.SprintAuditFile)
 	promptPath := filepath.Join(opts.ProjectDir, config.AuditPromptFile)
 
+	// Recover files with AD status (in git index but missing from disk).
+	// This can happen in worktree builds where the sprint agent staged files
+	// but the working tree was not preserved before audit.
+	if adFiles, adErr := git.ListADFiles(ctx, opts.ProjectDir); adErr == nil && len(adFiles) > 0 {
+		frylog.Log("  AUDIT: recovering %d AD-status files via checkout-index", len(adFiles))
+		if ciErr := git.CheckoutIndexAll(ctx, opts.ProjectDir); ciErr != nil {
+			frylog.Log("WARNING: audit: checkout-index recovery failed: %v", ciErr)
+		}
+	}
+
 	var knownFindings []Finding // tracked across outer cycles
 	resolved := newResolvedLedger()
 	outerStaleCount := 0
@@ -431,8 +441,10 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 		}
 
 		fixableCount := countFixableProductFindings(activeFindings, includeLow)
-		if fixableCount == 0 && len(activeBlockers) > 0 {
-			frylog.Log("  AUDIT: blocked by %d non-product findings — skipping code-fix loop", len(activeBlockers))
+
+		// Helper to build a blocked result — used by both the blocker-only
+		// exit and the harness-blocker early exit below.
+		blockedResult := func(stopReason string) *AuditResult {
 			auditMetrics.RecordCycleSummary(cycle)
 			auditMetrics.OuterCycles = cycle
 			auditMetrics.ConvergedAtCycle = cycle
@@ -452,9 +464,22 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 				BlockerCounts:        activeBlockerCounts,
 				Blockers:             activeBlockers,
 				Complexity:           opts.Complexity,
-				StopReason:           lowYieldStopReason,
+				StopReason:           stopReason,
 				Metrics:              auditMetrics,
-			}, nil
+			}
+		}
+
+		if fixableCount == 0 && len(activeBlockers) > 0 {
+			frylog.Log("  AUDIT: blocked by %d non-product findings — skipping code-fix loop", len(activeBlockers))
+			return blockedResult(lowYieldStopReason), nil
+		}
+
+		// Harness blockers indicate the build infrastructure is broken.
+		// Continuing to fix product defects in a broken environment is wasteful —
+		// exit immediately and surface the blocker for manual intervention.
+		if hasHarnessBlocker(activeFindings) {
+			frylog.Log("  AUDIT: harness_blocker detected — stopping audit (fix agent cannot resolve infrastructure issues)")
+			return blockedResult("harness_blocker"), nil
 		}
 
 		// Outer stale detection (progress-based mode only)
@@ -1390,7 +1415,7 @@ func buildUnifiedFixPrompt(opts AuditOpts, cluster remediationCluster, resolved 
 				frylog.Log("WARNING: skipping out-of-project target file %s", target)
 				continue
 			}
-			data, err := os.ReadFile(fullPath)
+			data, err := readFileOrGitIndex(opts.ProjectDir, target)
 			if err != nil {
 				frylog.Log("WARNING: cannot inline target file %s: %v", target, err)
 				continue
@@ -2286,6 +2311,27 @@ func Cleanup(projectDir string) error {
 		}
 	}
 	return nil
+}
+
+// readFileOrGitIndex reads a file from disk. If the file does not exist on
+// disk, it falls back to reading from the git index (handles AD-status files
+// in worktree builds). When both fail, returns the original os.IsNotExist
+// error so callers can distinguish "missing" from other errors.
+func readFileOrGitIndex(projectDir, relativePath string) ([]byte, error) {
+	fullPath := filepath.Join(projectDir, relativePath)
+	data, err := os.ReadFile(fullPath)
+	if err == nil {
+		return data, nil
+	}
+	if !os.IsNotExist(err) {
+		return nil, err
+	}
+	// File missing from disk; try reading from git index.
+	indexData, indexErr := git.ReadIndexFile(context.Background(), projectDir, relativePath)
+	if indexErr != nil {
+		return nil, err // return original os.IsNotExist so callers can detect "missing"
+	}
+	return indexData, nil
 }
 
 func appendCodebaseContext(b *strings.Builder, projectDir string) {

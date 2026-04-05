@@ -55,6 +55,45 @@ func TestGitCheckpoint_EmptySprintName(t *testing.T) {
 	assert.Equal(t, "Epic Name: Sprint 3 build-audit [automated]", strings.TrimSpace(string(output)))
 }
 
+func TestGitCheckpoint_CleanAfterCommit(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	require.NoError(t, InitGit(context.Background(), dir))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "app.go"), []byte("package main\n"), 0o644))
+
+	err := GitCheckpoint(context.Background(), dir, "Epic", 1, "Sprint", "complete")
+	require.NoError(t, err)
+
+	// Working tree should be clean after checkpoint
+	ex := &ExecExecutor{}
+	status, err := ex.StatusPorcelain(context.Background(), dir)
+	require.NoError(t, err)
+	assert.Empty(t, strings.TrimSpace(status), "working tree should be clean after checkpoint")
+}
+
+func TestGitCheckpointWith_ADStatusWarning(t *testing.T) {
+	t.Parallel()
+
+	// Use a mock that simulates AD-status files after commit
+	var commitCalled bool
+	ex := &mockExecutor{
+		AddAllFn: func(_ context.Context, _ string) error { return nil },
+		CommitAllowEmptyFn: func(_ context.Context, _ string, _ string) error {
+			commitCalled = true
+			return nil
+		},
+		StatusPorcelainFn: func(_ context.Context, _ string) (string, error) {
+			return "AD app.go\nAD lib.go\n", nil
+		},
+	}
+
+	err := GitCheckpointWith(context.Background(), t.TempDir(), "Epic", 1, "Sprint", "complete", ex)
+	require.NoError(t, err)
+	assert.True(t, commitCalled, "commit should have been called")
+	// The function logs a warning but does not return an error — the commit itself succeeded.
+}
+
 func TestInitGitIdempotent(t *testing.T) {
 	t.Parallel()
 
@@ -363,6 +402,10 @@ type mockExecutor struct {
 	StatusPorcelainFn   func(ctx context.Context, dir string) (string, error)
 	LogGrepFn           func(ctx context.Context, dir string, grepPattern string, maxCount int, format string) (string, error)
 	RestoreFilesFn      func(ctx context.Context, dir string, files []string) error
+	CommitCountFn       func(ctx context.Context, dir string) (int, error)
+	ReadIndexFileFn     func(ctx context.Context, dir string, relativePath string) ([]byte, error)
+	CheckoutIndexAllFn  func(ctx context.Context, dir string) error
+	ListADFilesFn       func(ctx context.Context, dir string) ([]string, error)
 	WorktreeListFn      func(ctx context.Context, dir string) ([]string, error)
 	WorktreeAddFn       func(ctx context.Context, dir string, worktreePath, branchName string, createBranch bool) error
 	WorktreePruneFn     func(ctx context.Context, dir string) error
@@ -481,6 +524,30 @@ func (m *mockExecutor) RestoreFiles(ctx context.Context, dir string, files []str
 		return m.RestoreFilesFn(ctx, dir, files)
 	}
 	return nil
+}
+func (m *mockExecutor) CommitCount(ctx context.Context, dir string) (int, error) {
+	if m.CommitCountFn != nil {
+		return m.CommitCountFn(ctx, dir)
+	}
+	return 0, nil
+}
+func (m *mockExecutor) ReadIndexFile(ctx context.Context, dir string, relativePath string) ([]byte, error) {
+	if m.ReadIndexFileFn != nil {
+		return m.ReadIndexFileFn(ctx, dir, relativePath)
+	}
+	return nil, nil
+}
+func (m *mockExecutor) CheckoutIndexAll(ctx context.Context, dir string) error {
+	if m.CheckoutIndexAllFn != nil {
+		return m.CheckoutIndexAllFn(ctx, dir)
+	}
+	return nil
+}
+func (m *mockExecutor) ListADFiles(ctx context.Context, dir string) ([]string, error) {
+	if m.ListADFilesFn != nil {
+		return m.ListADFilesFn(ctx, dir)
+	}
+	return nil, nil
 }
 func (m *mockExecutor) WorktreeList(ctx context.Context, dir string) ([]string, error) {
 	if m.WorktreeListFn != nil {
@@ -711,4 +778,192 @@ func TestRestoreFiles_EmptyList(t *testing.T) {
 
 	err := RestoreFiles(context.Background(), t.TempDir(), nil)
 	assert.NoError(t, err)
+}
+
+func TestIsFreshlyInitialized(t *testing.T) {
+	t.Parallel()
+
+	t.Run("fresh init returns true", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		require.NoError(t, InitGit(context.Background(), dir))
+		assert.True(t, IsFreshlyInitialized(context.Background(), dir))
+	})
+
+	t.Run("multiple commits returns false", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		require.NoError(t, InitGit(context.Background(), dir))
+		// Add a second commit
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "file.txt"), []byte("content"), 0o644))
+		ex := &ExecExecutor{}
+		require.NoError(t, ex.AddAll(context.Background(), dir))
+		require.NoError(t, ex.CommitAllowEmpty(context.Background(), dir, "second commit"))
+		assert.False(t, IsFreshlyInitialized(context.Background(), dir))
+	})
+
+	t.Run("one commit with different message returns false", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		ex := &ExecExecutor{}
+		require.NoError(t, ex.Init(context.Background(), dir))
+		require.NoError(t, ensureLocalIdentity(context.Background(), dir))
+		require.NoError(t, ex.CommitAllowEmpty(context.Background(), dir, "Custom first commit"))
+		assert.False(t, IsFreshlyInitialized(context.Background(), dir))
+	})
+
+	t.Run("not a repo returns false", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		assert.False(t, IsFreshlyInitialized(context.Background(), dir))
+	})
+}
+
+func TestIsFreshlyInitializedWith_Mock(t *testing.T) {
+	t.Parallel()
+
+	t.Run("exactly one automated commit", func(t *testing.T) {
+		t.Parallel()
+		ex := &mockExecutor{
+			CommitCountFn: func(_ context.Context, _ string) (int, error) { return 1, nil },
+			LogGrepFn: func(_ context.Context, _ string, _ string, _ int, _ string) (string, error) {
+				return initialCommitMessage, nil
+			},
+		}
+		assert.True(t, IsFreshlyInitializedWith(context.Background(), t.TempDir(), ex))
+	})
+
+	t.Run("commit count error", func(t *testing.T) {
+		t.Parallel()
+		ex := &mockExecutor{
+			CommitCountFn: func(_ context.Context, _ string) (int, error) { return 0, errors.New("no head") },
+		}
+		assert.False(t, IsFreshlyInitializedWith(context.Background(), t.TempDir(), ex))
+	})
+}
+
+func TestCommitCount(t *testing.T) {
+	t.Parallel()
+
+	t.Run("one commit", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		require.NoError(t, InitGit(context.Background(), dir))
+		count, err := DefaultExecutor.CommitCount(context.Background(), dir)
+		require.NoError(t, err)
+		assert.Equal(t, 1, count)
+	})
+
+	t.Run("two commits", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		require.NoError(t, InitGit(context.Background(), dir))
+		ex := &ExecExecutor{}
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "f.txt"), []byte("x"), 0o644))
+		require.NoError(t, ex.AddAll(context.Background(), dir))
+		require.NoError(t, ex.CommitAllowEmpty(context.Background(), dir, "second"))
+		count, err := ex.CommitCount(context.Background(), dir)
+		require.NoError(t, err)
+		assert.Equal(t, 2, count)
+	})
+}
+
+func TestReadIndexFile(t *testing.T) {
+	t.Parallel()
+
+	t.Run("reads staged file missing from disk", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		require.NoError(t, InitGit(context.Background(), dir))
+
+		// Create and stage a file
+		filePath := filepath.Join(dir, "hello.txt")
+		require.NoError(t, os.WriteFile(filePath, []byte("hello world"), 0o644))
+		ex := &ExecExecutor{}
+		require.NoError(t, ex.AddAll(context.Background(), dir))
+
+		// Delete from disk but keep in index
+		require.NoError(t, os.Remove(filePath))
+
+		data, err := ReadIndexFile(context.Background(), dir, "hello.txt")
+		require.NoError(t, err)
+		assert.Equal(t, "hello world", string(data))
+	})
+
+	t.Run("error for nonexistent file", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		require.NoError(t, InitGit(context.Background(), dir))
+
+		_, err := ReadIndexFile(context.Background(), dir, "nonexistent.txt")
+		assert.Error(t, err)
+	})
+}
+
+func TestCheckoutIndexAll(t *testing.T) {
+	t.Parallel()
+
+	t.Run("restores AD-status files", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		require.NoError(t, InitGit(context.Background(), dir))
+
+		// Create and stage files
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "a.txt"), []byte("aaa"), 0o644))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "b.txt"), []byte("bbb"), 0o644))
+		ex := &ExecExecutor{}
+		require.NoError(t, ex.AddAll(context.Background(), dir))
+
+		// Delete from disk
+		require.NoError(t, os.Remove(filepath.Join(dir, "a.txt")))
+		require.NoError(t, os.Remove(filepath.Join(dir, "b.txt")))
+
+		// Verify they're gone
+		_, err := os.Stat(filepath.Join(dir, "a.txt"))
+		require.True(t, os.IsNotExist(err))
+
+		// Recover
+		require.NoError(t, CheckoutIndexAll(context.Background(), dir))
+
+		// Verify restored
+		data, err := os.ReadFile(filepath.Join(dir, "a.txt"))
+		require.NoError(t, err)
+		assert.Equal(t, "aaa", string(data))
+
+		data, err = os.ReadFile(filepath.Join(dir, "b.txt"))
+		require.NoError(t, err)
+		assert.Equal(t, "bbb", string(data))
+	})
+}
+
+func TestListADFiles(t *testing.T) {
+	t.Parallel()
+
+	t.Run("detects AD-status files", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		require.NoError(t, InitGit(context.Background(), dir))
+
+		// Create and stage a new file
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "staged.txt"), []byte("staged"), 0o644))
+		ex := &ExecExecutor{}
+		require.NoError(t, ex.AddAll(context.Background(), dir))
+
+		// Delete from disk to create AD status
+		require.NoError(t, os.Remove(filepath.Join(dir, "staged.txt")))
+
+		adFiles, err := ListADFiles(context.Background(), dir)
+		require.NoError(t, err)
+		assert.Contains(t, adFiles, "staged.txt")
+	})
+
+	t.Run("empty when no AD files", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		require.NoError(t, InitGit(context.Background(), dir))
+
+		adFiles, err := ListADFiles(context.Background(), dir)
+		require.NoError(t, err)
+		assert.Empty(t, adFiles)
+	})
 }

@@ -11,6 +11,10 @@ import (
 	frylog "github.com/yevgetman/fry/internal/log"
 )
 
+// initialCommitMessage is the exact message used by InitGitWith for the
+// automated first commit. IsFreshlyInitialized checks for this string.
+const initialCommitMessage = "Initial commit [automated]"
+
 // InitGit initializes a git repository with local identity and .gitignore entries.
 func InitGit(ctx context.Context, projectDir string) error {
 	return InitGitWith(ctx, projectDir, DefaultExecutor)
@@ -38,10 +42,48 @@ func InitGitWith(ctx context.Context, projectDir string, ex Executor) error {
 	if err := ex.AddAll(ctx, projectDir); err != nil {
 		return fmt.Errorf("initial commit: add: %w", err)
 	}
-	if err := ex.CommitAllowEmpty(ctx, projectDir, "Initial commit [automated]"); err != nil {
+	if err := ex.CommitAllowEmpty(ctx, projectDir, initialCommitMessage); err != nil {
 		return fmt.Errorf("initial commit: %w", err)
 	}
 	return nil
+}
+
+// IsFreshlyInitialized returns true if the repository at projectDir was
+// just initialised by fry (exactly one commit with the automated message).
+// This is used to avoid worktree/branch strategies on repos with no real history.
+func IsFreshlyInitialized(ctx context.Context, projectDir string) bool {
+	return IsFreshlyInitializedWith(ctx, projectDir, DefaultExecutor)
+}
+
+// IsFreshlyInitializedWith is like IsFreshlyInitialized but uses the provided Executor.
+func IsFreshlyInitializedWith(ctx context.Context, projectDir string, ex Executor) bool {
+	count, err := ex.CommitCount(ctx, projectDir)
+	if err != nil || count != 1 {
+		return false
+	}
+	msg, err := ex.LogGrep(ctx, projectDir, "", 1, "%s")
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(msg) == initialCommitMessage
+}
+
+// ReadIndexFile reads a file from the git staging area (index).
+// This is the fallback when a file exists in the index but not on disk (AD status).
+func ReadIndexFile(ctx context.Context, projectDir, relativePath string) ([]byte, error) {
+	return DefaultExecutor.ReadIndexFile(ctx, projectDir, relativePath)
+}
+
+// CheckoutIndexAll materialises all index entries onto the working tree.
+// This recovers files that are staged but missing from disk (AD status).
+func CheckoutIndexAll(ctx context.Context, projectDir string) error {
+	return DefaultExecutor.CheckoutIndexAll(ctx, projectDir)
+}
+
+// ListADFiles returns relative paths of files in AD status (added to index,
+// deleted from working tree).
+func ListADFiles(ctx context.Context, projectDir string) ([]string, error) {
+	return DefaultExecutor.ListADFiles(ctx, projectDir)
 }
 
 // GitCheckpoint creates a git commit capturing all current changes.
@@ -63,6 +105,26 @@ func GitCheckpointWith(ctx context.Context, projectDir, epicName string, sprintN
 	if err := ex.CommitAllowEmpty(ctx, projectDir, message); err != nil {
 		return fmt.Errorf("git checkpoint: %w", err)
 	}
+
+	// Post-commit verification: confirm the working tree is clean.
+	// A dirty tree after commit indicates files were not captured (e.g. AD-status
+	// files, race with engine cleanup). Log a warning so the issue is visible
+	// in build logs rather than silently propagating to the audit phase.
+	status, statusErr := ex.StatusPorcelain(ctx, projectDir)
+	if statusErr == nil && strings.TrimSpace(status) != "" {
+		adCount := 0
+		for _, line := range strings.Split(status, "\n") {
+			if len(line) >= 2 && line[0] == 'A' && line[1] == 'D' {
+				adCount++
+			}
+		}
+		if adCount > 0 {
+			frylog.Log("WARNING: git checkpoint: %d AD-status files after commit (staged but missing from disk) — possible worktree integrity issue", adCount)
+		} else {
+			frylog.Log("WARNING: git checkpoint: working tree not clean after commit — %d lines in git status", len(strings.Split(strings.TrimSpace(status), "\n")))
+		}
+	}
+
 	return nil
 }
 

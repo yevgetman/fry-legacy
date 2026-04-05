@@ -197,6 +197,7 @@ func TestResolveRunGitStrategy(t *testing.T) {
 		requested            git.GitStrategy
 		triageDecision       *triage.TriageDecision
 		repoExistedBeforeRun bool
+		isFreshlyInitialized bool
 		want                 git.GitStrategy
 	}{
 		{
@@ -209,6 +210,14 @@ func TestResolveRunGitStrategy(t *testing.T) {
 			name:                 "first build in newly initialized repo stays current",
 			requested:            git.StrategyAuto,
 			repoExistedBeforeRun: false,
+			triageDecision:       &triage.TriageDecision{Complexity: triage.ComplexityComplex},
+			want:                 git.StrategyCurrent,
+		},
+		{
+			name:                 "fry-init repo stays current even for complex triage",
+			requested:            git.StrategyAuto,
+			repoExistedBeforeRun: true,
+			isFreshlyInitialized: true,
 			triageDecision:       &triage.TriageDecision{Complexity: triage.ComplexityComplex},
 			want:                 git.StrategyCurrent,
 		},
@@ -240,7 +249,7 @@ func TestResolveRunGitStrategy(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := resolveRunGitStrategy(tt.requested, tt.triageDecision, tt.repoExistedBeforeRun)
+			got := resolveRunGitStrategy(tt.requested, tt.triageDecision, tt.repoExistedBeforeRun, tt.isFreshlyInitialized)
 			assert.Equal(t, tt.want, got)
 		})
 	}

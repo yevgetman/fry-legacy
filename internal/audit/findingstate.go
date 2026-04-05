@@ -50,8 +50,7 @@ func fingerprintFindingArtifact(projectDir string, finding Finding) string {
 		return ""
 	}
 
-	absPath := filepath.Join(projectDir, target.Path)
-	data, err := os.ReadFile(absPath)
+	data, err := readFileOrGitIndex(projectDir, target.Path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "missing:" + target.Path

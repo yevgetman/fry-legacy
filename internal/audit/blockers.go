@@ -120,6 +120,15 @@ func blockerCounts(findings []Finding) map[string]int {
 	return counts
 }
 
+func hasHarnessBlocker(findings []Finding) bool {
+	for _, f := range findings {
+		if !f.Resolved && f.categoryOrDefault() == FindingCategoryHarnessBlocker {
+			return true
+		}
+	}
+	return false
+}
+
 func filterBlockers(findings []Finding) []Finding {
 	var blockers []Finding
 	for _, finding := range findings {

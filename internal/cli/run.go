@@ -507,11 +507,12 @@ var runCmd = &cobra.Command{
 		}
 
 		// --- Git strategy setup ---
+		freshInit := repoExistedBeforeRun && git.IsFreshlyInitialized(ctx, projectPath)
 		if strategySetup == nil && gitStrategy != git.StrategyCurrent {
-			gitStrategy = resolveRunGitStrategy(gitStrategy, triageDecision, repoExistedBeforeRun)
+			gitStrategy = resolveRunGitStrategy(gitStrategy, triageDecision, repoExistedBeforeRun, freshInit)
 			if gitStrategy == git.StrategyCurrent && runBranchName != "" {
 				switch {
-				case !repoExistedBeforeRun:
+				case !repoExistedBeforeRun || freshInit:
 					frlog.Log("WARNING: --branch-name ignored because git strategy resolved to current (new repo initialized for first build)")
 				case triageDecision == nil:
 					frlog.Log("WARNING: --branch-name ignored because git strategy resolved to current (epic already exists; use --git-strategy branch to force)")
@@ -2385,14 +2386,15 @@ var runCmd = &cobra.Command{
 	},
 }
 
-func resolveRunGitStrategy(requested git.GitStrategy, triageDecision *triage.TriageDecision, repoExistedBeforeRun bool) git.GitStrategy {
+func resolveRunGitStrategy(requested git.GitStrategy, triageDecision *triage.TriageDecision, repoExistedBeforeRun, isFreshlyInitialized bool) git.GitStrategy {
 	if requested != git.StrategyAuto {
 		return requested
 	}
 
-	// A repo created for this build has no existing history to isolate, so keep
-	// the first run on the primary branch instead of branching or using a worktree.
-	if !repoExistedBeforeRun {
+	// A repo created for this build — or one that only has the fry-automated
+	// initial commit — has no existing history to isolate, so keep the first
+	// run on the primary branch instead of branching or using a worktree.
+	if !repoExistedBeforeRun || isFreshlyInitialized {
 		return git.StrategyCurrent
 	}
 
