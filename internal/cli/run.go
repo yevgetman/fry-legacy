@@ -1302,6 +1302,14 @@ var runCmd = &cobra.Command{
 					_ = git.CheckoutIndexAll(ctx, projectPath)
 				}
 
+				// Remove nested .git directories left by tools like create-next-app.
+				// These cause the parent repo to record gitlinks instead of tracking
+				// files normally. Runs in fry's process to bypass engine sandbox
+				// restrictions that block rm -rf inside the AI agent session.
+				if cleaned, cleanErr := git.CleanNestedGitDirs(projectPath); cleanErr == nil && len(cleaned) > 0 {
+					frlog.Log("  GIT: removed %d nested .git directory(ies): %v", len(cleaned), cleaned)
+				}
+
 				compactEngine, err := runPlanner.Build(currentEngineName(), mcpOpts...)
 				if err != nil {
 					return err

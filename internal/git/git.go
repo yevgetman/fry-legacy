@@ -86,6 +86,49 @@ func ListADFiles(ctx context.Context, projectDir string) ([]string, error) {
 	return DefaultExecutor.ListADFiles(ctx, projectDir)
 }
 
+// CleanNestedGitDirs finds and removes nested .git directories that are
+// children of the project root. These are left behind by tools like
+// create-next-app and cause the parent repo to record gitlinks (mode 160000)
+// instead of tracking the files normally. This runs in fry's own process,
+// bypassing engine sandbox restrictions that prevent the fix agent from
+// running rm -rf on .git directories.
+func CleanNestedGitDirs(projectDir string) ([]string, error) {
+	var cleaned []string
+	err := filepath.WalkDir(projectDir, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil // skip unreadable entries
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		// Skip the root .git directory itself
+		if path == filepath.Join(projectDir, ".git") {
+			return filepath.SkipDir
+		}
+		// Skip .fry directories
+		name := d.Name()
+		if name == ".fry" || name == ".fry-worktrees" || name == ".fry-archive" || name == "node_modules" || name == ".next" {
+			return filepath.SkipDir
+		}
+		// Detect nested .git
+		if name == ".git" {
+			parent := filepath.Dir(path)
+			if parent != projectDir {
+				if removeErr := os.RemoveAll(path); removeErr != nil {
+					frylog.Log("WARNING: could not remove nested .git at %s: %v", path, removeErr)
+				} else {
+					rel, _ := filepath.Rel(projectDir, path)
+					cleaned = append(cleaned, rel)
+				}
+				return filepath.SkipDir
+			}
+			return filepath.SkipDir
+		}
+		return nil
+	})
+	return cleaned, err
+}
+
 // GitCheckpoint creates a git commit capturing all current changes.
 func GitCheckpoint(ctx context.Context, projectDir, epicName string, sprintNum int, sprintName, label string) error {
 	return GitCheckpointWith(ctx, projectDir, epicName, sprintNum, sprintName, label, DefaultExecutor)

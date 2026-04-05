@@ -967,3 +967,52 @@ func TestListADFiles(t *testing.T) {
 		assert.Empty(t, adFiles)
 	})
 }
+
+func TestCleanNestedGitDirs(t *testing.T) {
+	t.Parallel()
+
+	t.Run("removes nested .git directories", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		require.NoError(t, InitGit(context.Background(), dir))
+
+		// Create a nested .git directory (simulating create-next-app)
+		nestedGit := filepath.Join(dir, "apps", "web", ".git")
+		require.NoError(t, os.MkdirAll(nestedGit, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(nestedGit, "HEAD"), []byte("ref: refs/heads/main\n"), 0o644))
+
+		cleaned, err := CleanNestedGitDirs(dir)
+		require.NoError(t, err)
+		assert.Len(t, cleaned, 1)
+		assert.Equal(t, filepath.Join("apps", "web", ".git"), cleaned[0])
+
+		// Verify it's gone
+		_, statErr := os.Stat(nestedGit)
+		assert.True(t, os.IsNotExist(statErr))
+	})
+
+	t.Run("preserves root .git", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		require.NoError(t, InitGit(context.Background(), dir))
+
+		cleaned, err := CleanNestedGitDirs(dir)
+		require.NoError(t, err)
+		assert.Empty(t, cleaned)
+
+		// Root .git still exists
+		_, statErr := os.Stat(filepath.Join(dir, ".git"))
+		assert.NoError(t, statErr)
+	})
+
+	t.Run("no nested .git returns empty", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		require.NoError(t, InitGit(context.Background(), dir))
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, "apps", "api", "src"), 0o755))
+
+		cleaned, err := CleanNestedGitDirs(dir)
+		require.NoError(t, err)
+		assert.Empty(t, cleaned)
+	})
+}
