@@ -123,7 +123,10 @@ func blockerCounts(findings []Finding) map[string]int {
 func hasHarnessBlocker(findings []Finding) bool {
 	for _, f := range findings {
 		if !f.Resolved && f.categoryOrDefault() == FindingCategoryHarnessBlocker {
-			return true
+			sev := strings.ToUpper(f.Severity)
+			if sev == "CRITICAL" || sev == "HIGH" {
+				return true
+			}
 		}
 	}
 	return false

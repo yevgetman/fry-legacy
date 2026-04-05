@@ -2073,6 +2073,31 @@ func TestHasHarnessBlocker(t *testing.T) {
 		assert.False(t, hasHarnessBlocker(findings))
 	})
 
+	t.Run("ignores LOW harness blocker", func(t *testing.T) {
+		t.Parallel()
+		findings := []Finding{
+			{Description: "A bug", Severity: "MODERATE"},
+			{Description: "Harness issue", Severity: "LOW", Category: FindingCategoryHarnessBlocker},
+		}
+		assert.False(t, hasHarnessBlocker(findings))
+	})
+
+	t.Run("ignores MODERATE harness blocker", func(t *testing.T) {
+		t.Parallel()
+		findings := []Finding{
+			{Description: "Harness issue", Severity: "MODERATE", Category: FindingCategoryHarnessBlocker},
+		}
+		assert.False(t, hasHarnessBlocker(findings))
+	})
+
+	t.Run("detects HIGH harness blocker", func(t *testing.T) {
+		t.Parallel()
+		findings := []Finding{
+			{Description: "Harness issue", Severity: "HIGH", Category: FindingCategoryHarnessBlocker},
+		}
+		assert.True(t, hasHarnessBlocker(findings))
+	})
+
 	t.Run("false when no blockers", func(t *testing.T) {
 		t.Parallel()
 		findings := []Finding{
