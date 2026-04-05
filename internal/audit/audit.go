@@ -163,16 +163,6 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 	auditFilePath := filepath.Join(opts.ProjectDir, config.SprintAuditFile)
 	promptPath := filepath.Join(opts.ProjectDir, config.AuditPromptFile)
 
-	// Recover files with AD status (in git index but missing from disk).
-	// This can happen in worktree builds where the sprint agent staged files
-	// but the working tree was not preserved before audit.
-	if adFiles, adErr := git.ListADFiles(ctx, opts.ProjectDir); adErr == nil && len(adFiles) > 0 {
-		frylog.Log("  AUDIT: recovering %d AD-status files via checkout-index", len(adFiles))
-		if ciErr := git.CheckoutIndexAll(ctx, opts.ProjectDir); ciErr != nil {
-			frylog.Log("WARNING: audit: checkout-index recovery failed: %v", ciErr)
-		}
-	}
-
 	var knownFindings []Finding // tracked across outer cycles
 	resolved := newResolvedLedger()
 	outerStaleCount := 0
@@ -210,6 +200,16 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 		})
 
 		refreshDiff(&opts)
+
+		// Recover files with AD status (in git index but missing from disk).
+		// Runs every cycle, not just once, because engine sessions or fix
+		// rollbacks can re-introduce the condition mid-audit.
+		if adFiles, adErr := git.ListADFiles(ctx, opts.ProjectDir); adErr == nil && len(adFiles) > 0 {
+			frylog.Log("  AUDIT: recovering %d AD-status files via checkout-index (cycle %d)", len(adFiles), cycle)
+			if ciErr := git.CheckoutIndexAll(ctx, opts.ProjectDir); ciErr != nil {
+				frylog.Log("WARNING: audit: checkout-index recovery failed: %v", ciErr)
+			}
+		}
 
 		auditPromptOpts := opts
 		auditRefreshReason := ""

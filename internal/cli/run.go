@@ -1293,6 +1293,15 @@ var runCmd = &cobra.Command{
 					return err
 				}
 
+				// Recover AD-status files after checkpoint. If the commit didn't
+				// capture all files (e.g. engine cleanup race), materialise them
+				// from the index now so subsequent sprints and fast-effort builds
+				// (which skip audit and its per-cycle recovery) have files on disk.
+				if adFiles, adErr := git.ListADFiles(ctx, projectPath); adErr == nil && len(adFiles) > 0 {
+					frlog.Log("  GIT: recovering %d AD-status files after checkpoint", len(adFiles))
+					_ = git.CheckoutIndexAll(ctx, projectPath)
+				}
+
 				compactEngine, err := runPlanner.Build(currentEngineName(), mcpOpts...)
 				if err != nil {
 					return err
