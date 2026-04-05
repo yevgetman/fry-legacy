@@ -155,20 +155,55 @@ func GitCheckpointWith(ctx context.Context, projectDir, epicName string, sprintN
 	// in build logs rather than silently propagating to the audit phase.
 	status, statusErr := ex.StatusPorcelain(ctx, projectDir)
 	if statusErr == nil && strings.TrimSpace(status) != "" {
-		adCount := 0
+		var adCount, gitlinkCount, otherCount int
 		for _, line := range strings.Split(status, "\n") {
-			if len(line) >= 2 && line[0] == 'A' && line[1] == 'D' {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			switch {
+			case len(line) >= 2 && line[0] == 'A' && line[1] == 'D':
 				adCount++
+			case strings.HasSuffix(line, "/.git") || isGitlinkEntry(projectDir, line):
+				gitlinkCount++
+			default:
+				otherCount++
 			}
 		}
 		if adCount > 0 {
 			frylog.Log("WARNING: git checkpoint: %d AD-status files after commit (staged but missing from disk) — possible worktree integrity issue", adCount)
-		} else {
-			frylog.Log("WARNING: git checkpoint: working tree not clean after commit — %d lines in git status", len(strings.Split(strings.TrimSpace(status), "\n")))
+		}
+		if gitlinkCount > 0 {
+			frylog.Log("WARNING: git checkpoint: %d nested .git gitlink(s) after commit — will be cleaned on next sprint", gitlinkCount)
+		}
+		if otherCount > 0 {
+			frylog.Log("WARNING: git checkpoint: working tree not clean after commit — %d unexpected dirty entries", otherCount)
 		}
 	}
 
 	return nil
+}
+
+// isGitlinkEntry checks if a git status porcelain line refers to a path
+// that contains a nested .git directory (gitlink/submodule entry).
+func isGitlinkEntry(projectDir, line string) bool {
+	// Porcelain v1 format: XY <space> path (or XY <space> path -> path for renames)
+	if len(line) < 4 {
+		return false
+	}
+	relPath := strings.TrimSpace(line[2:])
+	if idx := strings.Index(relPath, " -> "); idx >= 0 {
+		relPath = relPath[idx+4:]
+	}
+	if relPath == "" {
+		return false
+	}
+	// Check if the path is a directory containing .git
+	info, err := os.Stat(filepath.Join(projectDir, relPath, ".git"))
+	if err != nil {
+		return false
+	}
+	return info.IsDir()
 }
 
 // CommitPartialWork commits partial work from a failed sprint.
