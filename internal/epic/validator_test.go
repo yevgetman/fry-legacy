@@ -1,6 +1,7 @@
 package epic
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -10,7 +11,7 @@ import (
 func makeValidSprint(number int) Sprint {
 	return Sprint{
 		Number:        number,
-		Name:          "Sprint name",
+		Name:          fmt.Sprintf("Sprint %d", number),
 		MaxIterations: 10,
 		Promise:       "something done",
 		Prompt:        "do the thing",
@@ -109,6 +110,17 @@ func TestValidateEpic_TableDriven(t *testing.T) {
 			},
 			wantErr:     true,
 			errContains: "max_fail_percent",
+		},
+		{
+			name: "duplicate sprint names",
+			epic: &Epic{
+				Sprints: []Sprint{
+					{Number: 1, Name: "Setup", MaxIterations: 10, Promise: "done", Prompt: "do it"},
+					{Number: 2, Name: "Setup", MaxIterations: 10, Promise: "done", Prompt: "do it"},
+				},
+			},
+			wantErr:     true,
+			errContains: "duplicate name",
 		},
 		{
 			name: "sprint count exceeds effort level",

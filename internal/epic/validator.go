@@ -7,6 +7,7 @@ func ValidateEpic(e *Epic) error {
 		return fmt.Errorf("epic must contain at least one sprint")
 	}
 
+	seenNames := make(map[string]int, len(e.Sprints))
 	for i, sprint := range e.Sprints {
 		expected := i + 1
 		if sprint.Number != expected {
@@ -15,6 +16,10 @@ func ValidateEpic(e *Epic) error {
 		if sprint.Name == "" {
 			return fmt.Errorf("sprint %d is missing @name", sprint.Number)
 		}
+		if prev, dup := seenNames[sprint.Name]; dup {
+			return fmt.Errorf("sprint %d has duplicate name %q (already used by sprint %d)", sprint.Number, sprint.Name, prev)
+		}
+		seenNames[sprint.Name] = sprint.Number
 		if sprint.MaxIterations <= 0 {
 			return fmt.Errorf("sprint %d must have @max_iterations greater than 0", sprint.Number)
 		}
