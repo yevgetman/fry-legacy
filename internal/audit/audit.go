@@ -1415,6 +1415,11 @@ func buildUnifiedFixPrompt(opts AuditOpts, cluster remediationCluster, resolved 
 				frylog.Log("WARNING: skipping out-of-project target file %s", target)
 				continue
 			}
+			// Skip directories — the audit agent sometimes lists directories
+			// (e.g. .git/) as target files, which cannot be inlined.
+			if info, statErr := os.Stat(fullPath); statErr == nil && info.IsDir() {
+				continue
+			}
 			data, err := readFileOrGitIndex(opts.ProjectDir, target)
 			if err != nil {
 				frylog.Log("WARNING: cannot inline target file %s: %v", target, err)
