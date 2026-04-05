@@ -86,6 +86,62 @@ func ListADFiles(ctx context.Context, projectDir string) ([]string, error) {
 	return DefaultExecutor.ListADFiles(ctx, projectDir)
 }
 
+// FileSnapshot holds the content of files at a point in time. Used by the
+// audit fix loop to restore files to their pre-fix state instead of to HEAD,
+// which may be a prior sprint's checkpoint and not contain the current sprint's files.
+type FileSnapshot struct {
+	entries map[string][]byte // relative path → content (nil = file did not exist)
+}
+
+// SnapshotFiles captures the current content of the named files.
+// Files that don't exist on disk are recorded as nil (absent).
+func SnapshotFiles(projectDir string, relativePaths []string) *FileSnapshot {
+	snap := &FileSnapshot{entries: make(map[string][]byte, len(relativePaths))}
+	for _, rel := range relativePaths {
+		data, err := os.ReadFile(filepath.Join(projectDir, rel))
+		if err != nil {
+			snap.entries[rel] = nil // absent
+		} else {
+			snap.entries[rel] = data
+		}
+	}
+	return snap
+}
+
+// RestoreFromSnapshot restores files to their snapshotted state.
+// Files that were absent in the snapshot are deleted. Files that existed
+// are written back with their original content. Returns a list of files
+// that were NOT in the snapshot (the caller should handle these separately,
+// e.g. via HEAD-based restore).
+func RestoreFromSnapshot(projectDir string, snap *FileSnapshot, files []string) (unhandled []string, err error) {
+	if snap == nil {
+		return files, nil
+	}
+	for _, rel := range files {
+		content, known := snap.entries[rel]
+		if !known {
+			unhandled = append(unhandled, rel)
+			continue
+		}
+		fullPath := filepath.Join(projectDir, rel)
+		if content == nil {
+			// File did not exist before the fix — delete it
+			if rmErr := os.Remove(fullPath); rmErr != nil && !os.IsNotExist(rmErr) {
+				return unhandled, fmt.Errorf("restore snapshot: remove %s: %w", rel, rmErr)
+			}
+		} else {
+			// Restore original content
+			if mkErr := os.MkdirAll(filepath.Dir(fullPath), 0o755); mkErr != nil {
+				return unhandled, fmt.Errorf("restore snapshot: mkdir for %s: %w", rel, mkErr)
+			}
+			if wErr := os.WriteFile(fullPath, content, 0o644); wErr != nil {
+				return unhandled, fmt.Errorf("restore snapshot: write %s: %w", rel, wErr)
+			}
+		}
+	}
+	return unhandled, nil
+}
+
 // CleanNestedGitDirs finds and removes nested .git directories that are
 // children of the project root. These are left behind by tools like
 // create-next-app and cause the parent repo to record gitlinks (mode 160000)

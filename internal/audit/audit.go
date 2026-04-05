@@ -621,6 +621,12 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 				return nil, fmt.Errorf("run audit loop: write fix prompt: %w", err)
 			}
 
+			// Snapshot target files before the fix agent runs. If the fix is
+			// rejected, we restore from this snapshot instead of from HEAD — which
+			// may be a prior sprint's checkpoint that doesn't contain the current
+			// sprint's files.
+			preFixSnapshot := git.SnapshotFiles(opts.ProjectDir, fixContract.TargetFiles())
+
 			// Run fix agent
 			fixLogPath := filepath.Join(buildLogsDir,
 				fmt.Sprintf("sprint%d_auditfix_%d_%d_%s.log", opts.Sprint.Number, cycle, fixIter, time.Now().Format("20060102_150405")),
@@ -684,12 +690,21 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 				default:
 					frylog.Log("  AUDIT FIX: no-op for cluster %d (%s) — skipping cluster", targetCluster.ID, targetCluster.Label)
 				}
-				// Roll back rejected changes so they don't persist in the worktree.
+				// Roll back rejected changes to their pre-fix state. Uses the
+				// snapshot for target files (preserves sprint deliverables) and
+				// falls back to HEAD restore for out-of-scope files.
 				if len(diffAssessment.ChangedFiles) > 0 {
-					if rbErr := git.RestoreFiles(ctx, opts.ProjectDir, diffAssessment.ChangedFiles); rbErr != nil {
-						frylog.Log("WARNING: audit: could not roll back rejected fix diff: %v", rbErr)
+					unhandled, rbErr := git.RestoreFromSnapshot(opts.ProjectDir, preFixSnapshot, diffAssessment.ChangedFiles)
+					if rbErr != nil {
+						frylog.Log("WARNING: audit: snapshot rollback failed, falling back to HEAD restore: %v", rbErr)
+						_ = git.RestoreFiles(ctx, opts.ProjectDir, diffAssessment.ChangedFiles)
 					} else {
-						frylog.Log("  AUDIT FIX: rolled back %d file(s) from rejected diff", len(diffAssessment.ChangedFiles))
+						// Restore files not in snapshot via HEAD (out-of-scope files)
+						if len(unhandled) > 0 {
+							_ = git.RestoreFiles(ctx, opts.ProjectDir, unhandled)
+						}
+						frylog.Log("  AUDIT FIX: rolled back %d file(s) from rejected diff (%d snapshot, %d HEAD)",
+							len(diffAssessment.ChangedFiles), len(diffAssessment.ChangedFiles)-len(unhandled), len(unhandled))
 						auditMetrics.UpdateLastCallRollback(diffAssessment.ChangedFiles)
 					}
 					// Detect rolled-back migration files. File rollback cannot
@@ -722,12 +737,15 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 			// Selective rollback: if accepted but some files are outside the contract scope,
 			// roll back only the out-of-scope files and reclassify as accepted_partial.
 			if diffAssessment.ValidationResult == fixValidationAccepted && len(diffAssessment.OutOfScopeFiles) > 0 {
-				if rbErr := git.RestoreFiles(ctx, opts.ProjectDir, diffAssessment.OutOfScopeFiles); rbErr != nil {
+				unhandledOOS, rbErr := git.RestoreFromSnapshot(opts.ProjectDir, preFixSnapshot, diffAssessment.OutOfScopeFiles)
+				if rbErr != nil {
 					frylog.Log("WARNING: audit: could not roll back %d out-of-scope file(s): %v — proceeding as accepted with out-of-scope files intact",
 						len(diffAssessment.OutOfScopeFiles), rbErr)
-					// Record the failed rollback attempt so the divergence is visible in metrics.
 					auditMetrics.UpdateLastCallRollback(diffAssessment.OutOfScopeFiles)
 				} else {
+					if len(unhandledOOS) > 0 {
+						_ = git.RestoreFiles(ctx, opts.ProjectDir, unhandledOOS)
+					}
 					frylog.Log("  AUDIT FIX: rolled back %d out-of-scope file(s), keeping in-scope changes for cluster %d (%s)",
 						len(diffAssessment.OutOfScopeFiles), targetCluster.ID, targetCluster.Label)
 					diffAssessment.ValidationResult = fixValidationAcceptedPartial

@@ -968,6 +968,84 @@ func TestListADFiles(t *testing.T) {
 	})
 }
 
+func TestSnapshotAndRestoreFiles(t *testing.T) {
+	t.Parallel()
+
+	t.Run("restores modified file to pre-fix content", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, "src"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "src", "app.ts"), []byte("original"), 0o644))
+
+		snap := SnapshotFiles(dir, []string{"src/app.ts"})
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "src", "app.ts"), []byte("modified by fix"), 0o644))
+
+		unhandled, err := RestoreFromSnapshot(dir, snap, []string{"src/app.ts"})
+		require.NoError(t, err)
+		assert.Empty(t, unhandled)
+
+		data, readErr := os.ReadFile(filepath.Join(dir, "src", "app.ts"))
+		require.NoError(t, readErr)
+		assert.Equal(t, "original", string(data))
+	})
+
+	t.Run("deletes file that was absent in snapshot", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+
+		snap := SnapshotFiles(dir, []string{"new-file.ts"})
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "new-file.ts"), []byte("created by fix"), 0o644))
+
+		unhandled, err := RestoreFromSnapshot(dir, snap, []string{"new-file.ts"})
+		require.NoError(t, err)
+		assert.Empty(t, unhandled)
+
+		_, statErr := os.Stat(filepath.Join(dir, "new-file.ts"))
+		assert.True(t, os.IsNotExist(statErr))
+	})
+
+	t.Run("preserves sprint files not in HEAD", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, "src"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "src", "sprint-file.ts"), []byte("sprint work"), 0o644))
+
+		snap := SnapshotFiles(dir, []string{"src/sprint-file.ts"})
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "src", "sprint-file.ts"), []byte("fix changed this"), 0o644))
+
+		unhandled, err := RestoreFromSnapshot(dir, snap, []string{"src/sprint-file.ts"})
+		require.NoError(t, err)
+		assert.Empty(t, unhandled)
+
+		data, readErr := os.ReadFile(filepath.Join(dir, "src", "sprint-file.ts"))
+		require.NoError(t, readErr)
+		assert.Equal(t, "sprint work", string(data), "sprint file should be restored to pre-fix content, not deleted")
+	})
+
+	t.Run("returns unhandled files not in snapshot", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "other.ts"), []byte("untouched"), 0o644))
+
+		snap := SnapshotFiles(dir, []string{"unrelated.ts"})
+
+		unhandled, err := RestoreFromSnapshot(dir, snap, []string{"other.ts"})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"other.ts"}, unhandled)
+
+		data, readErr := os.ReadFile(filepath.Join(dir, "other.ts"))
+		require.NoError(t, readErr)
+		assert.Equal(t, "untouched", string(data))
+	})
+
+	t.Run("nil snapshot returns all files as unhandled", func(t *testing.T) {
+		t.Parallel()
+		unhandled, err := RestoreFromSnapshot(t.TempDir(), nil, []string{"anything.ts"})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"anything.ts"}, unhandled)
+	})
+}
+
 func TestCleanNestedGitDirs(t *testing.T) {
 	t.Parallel()
 
