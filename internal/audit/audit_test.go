@@ -740,7 +740,7 @@ func TestAuditPromptContainsDiff(t *testing.T) {
 	t.Parallel()
 
 	opts := makeOpts(t, &stubEngine{name: "codex"})
-	prompt := buildAuditPrompt(opts, nil, nil)
+	prompt := buildAuditPrompt(opts, nil, nil, nil)
 	assert.Contains(t, prompt, "+new line")
 	assert.Contains(t, prompt, "-old line")
 }
@@ -750,7 +750,7 @@ func TestAuditPromptWritingMode(t *testing.T) {
 
 	opts := makeOpts(t, &stubEngine{name: "codex"})
 	opts.Mode = "writing"
-	prompt := buildAuditPrompt(opts, nil, nil)
+	prompt := buildAuditPrompt(opts, nil, nil, nil)
 	assert.Contains(t, prompt, "content auditor")
 	assert.Contains(t, prompt, "Coherence")
 	assert.Contains(t, prompt, "Tone & Voice")
@@ -769,7 +769,7 @@ func TestAuditPromptCondensesExecutive(t *testing.T) {
 	}
 	writeFile(t, filepath.Join(opts.ProjectDir, config.ExecutiveFile), string(long))
 
-	prompt := buildAuditPrompt(opts, nil, nil)
+	prompt := buildAuditPrompt(opts, nil, nil, nil)
 	assert.Contains(t, prompt, "...(truncated)")
 	assert.Contains(t, prompt, "## Project Context")
 }
@@ -784,7 +784,7 @@ func TestAuditPromptTruncatesSprintProgress(t *testing.T) {
 	}
 	writeFile(t, filepath.Join(opts.ProjectDir, config.SprintProgressFile), string(large))
 
-	prompt := buildAuditPrompt(opts, nil, nil)
+	prompt := buildAuditPrompt(opts, nil, nil, nil)
 	assert.Contains(t, prompt, "...(sprint progress truncated at 50KB)")
 	assert.Contains(t, prompt, "## What Was Done")
 }
@@ -797,7 +797,7 @@ func TestAuditPromptWithPreviousFindings(t *testing.T) {
 		{Location: "src/main.go:10", Description: "Null pointer", Severity: "CRITICAL", OriginCycle: 1},
 		{Description: "Missing validation", Severity: "HIGH", OriginCycle: 1},
 	}
-	prompt := buildAuditPrompt(opts, prev, nil)
+	prompt := buildAuditPrompt(opts, prev, nil, nil)
 
 	assert.Contains(t, prompt, "## Previously Identified Issues")
 	assert.Contains(t, prompt, "[src/main.go:10] Null pointer (CRITICAL)")
@@ -820,7 +820,7 @@ reinforced: 0
 ---
 Audit changes usually need matching updates in docs/sprint-audit.md.`)
 
-	prompt := buildAuditPrompt(opts, nil, nil)
+	prompt := buildAuditPrompt(opts, nil, nil, nil)
 
 	assert.Contains(t, prompt, "## Codebase Context")
 	assert.Contains(t, prompt, "Existing architecture details.")
@@ -832,7 +832,7 @@ func TestAuditPromptNoPreviousFindings(t *testing.T) {
 	t.Parallel()
 
 	opts := makeOpts(t, &stubEngine{name: "codex"})
-	prompt := buildAuditPrompt(opts, nil, nil)
+	prompt := buildAuditPrompt(opts, nil, nil, nil)
 
 	assert.NotContains(t, prompt, "## Previously Identified Issues")
 	assert.NotContains(t, prompt, "## Verified Previous Issues")
@@ -846,7 +846,7 @@ func TestAuditPromptSkipsResolvedPreviousFindings(t *testing.T) {
 		{Description: "Resolved issue", Severity: "HIGH", Resolved: true},
 		{Description: "Active issue", Severity: "CRITICAL", Resolved: false},
 	}
-	prompt := buildAuditPrompt(opts, prev, nil)
+	prompt := buildAuditPrompt(opts, prev, nil, nil)
 
 	assert.Contains(t, prompt, "## Previously Identified Issues")
 	assert.NotContains(t, prompt, "Resolved issue")
@@ -859,7 +859,7 @@ func TestAuditPromptIncludesSessionRefreshSummary(t *testing.T) {
 	opts := makeOpts(t, &stubEngine{name: "codex"})
 	opts.SessionCarryForward = "Session refreshed because call budget reached (3).\n- src/api.go:20: Missing error handling [HIGH]"
 
-	prompt := buildAuditPrompt(opts, nil, nil)
+	prompt := buildAuditPrompt(opts, nil, nil, nil)
 
 	assert.Contains(t, prompt, "## Session Refresh Summary")
 	assert.Contains(t, prompt, "call budget reached (3)")
@@ -2492,7 +2492,7 @@ func TestAuditPromptIncludesResolvedThemes(t *testing.T) {
 		{Description: "Missing validation", Severity: "MODERATE", OriginCycle: 2},
 	})
 
-	prompt := buildAuditPrompt(opts, nil, ledger)
+	prompt := buildAuditPrompt(opts, nil, ledger, nil)
 
 	assert.Contains(t, prompt, "## Resolved Themes (Do Not Reopen)")
 	assert.Contains(t, prompt, "SQL injection")
@@ -2504,7 +2504,7 @@ func TestAuditPromptNoResolvedThemesOnCycle1(t *testing.T) {
 	t.Parallel()
 
 	opts := makeOpts(t, &stubEngine{name: "codex"})
-	prompt := buildAuditPrompt(opts, nil, nil)
+	prompt := buildAuditPrompt(opts, nil, nil, nil)
 
 	assert.NotContains(t, prompt, "## Resolved Themes")
 }
@@ -2513,7 +2513,7 @@ func TestAuditPromptAntiReopenInstruction(t *testing.T) {
 	t.Parallel()
 
 	opts := makeOpts(t, &stubEngine{name: "codex"})
-	prompt := buildAuditPrompt(opts, nil, nil)
+	prompt := buildAuditPrompt(opts, nil, nil, nil)
 
 	assert.Contains(t, prompt, "previously resolved issue seems to recur under different wording")
 	assert.Contains(t, prompt, "New Evidence")

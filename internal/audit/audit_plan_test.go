@@ -33,7 +33,7 @@ func TestAuditPromptIncludesReconciliationDirective(t *testing.T) {
 	opts.Mode = "writing"
 	opts.Complexity = ComplexityHigh
 
-	prompt := buildAuditPrompt(opts, nil, nil)
+	prompt := buildAuditPrompt(opts, nil, nil, nil)
 	assert.Contains(t, prompt, "Priority Check: Figure Reconciliation")
 	assert.Contains(t, prompt, "Trace each claim to its source calculation")
 }
@@ -52,7 +52,7 @@ func TestAuditPromptIncludesRelevantDeviations(t *testing.T) {
 		AffectedSprints: []int{1},
 	}))
 
-	prompt := buildAuditPrompt(opts, nil, nil)
+	prompt := buildAuditPrompt(opts, nil, nil, nil)
 	assert.Contains(t, prompt, "Known Intentional Divergences")
 	assert.Contains(t, prompt, "pricing appendix remains authoritative")
 }

@@ -292,3 +292,16 @@ func buildRejectedOutcomes(findings []Finding, assessment FixDiffAssessment) []F
 	}
 	return outcomes
 }
+
+// isMigrationFile returns true if a file path looks like a database migration.
+// Used to warn when rolled-back fix diffs included migration files — the file
+// rollback cannot undo database state changes from commands like prisma migrate.
+func isMigrationFile(path string) bool {
+	lower := strings.ToLower(path)
+	return strings.Contains(lower, "/migrations/") ||
+		strings.Contains(lower, "/migrate/") ||
+		strings.HasSuffix(lower, ".migration.ts") ||
+		strings.HasSuffix(lower, ".migration.js") ||
+		strings.HasSuffix(lower, "_migration.rb") ||
+		strings.HasSuffix(lower, "_migration.py")
+}

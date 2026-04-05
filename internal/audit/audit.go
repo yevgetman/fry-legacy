@@ -232,7 +232,7 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 		}
 
 		// Build and write audit prompt (with known findings for verification on cycle 2+)
-		auditPrompt := buildAuditPrompt(auditPromptOpts, knownFindings, resolved)
+		auditPrompt := buildAuditPrompt(auditPromptOpts, knownFindings, resolved, fixHistory)
 		if err := writePromptFile(promptPath, auditPrompt); err != nil {
 			return nil, fmt.Errorf("run audit loop: write audit prompt: %w", err)
 		}
@@ -692,6 +692,14 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 						frylog.Log("  AUDIT FIX: rolled back %d file(s) from rejected diff", len(diffAssessment.ChangedFiles))
 						auditMetrics.UpdateLastCallRollback(diffAssessment.ChangedFiles)
 					}
+					// Detect rolled-back migration files. File rollback cannot
+					// undo database state changes from commands like prisma migrate.
+					// Warn prominently so the user can reconcile manually.
+					for _, f := range diffAssessment.ChangedFiles {
+						if isMigrationFile(f) {
+							frylog.Log("WARNING: audit: rolled back migration file %s — database may have applied this migration; manual reconciliation may be needed", f)
+						}
+					}
 				}
 				// Fast-fail: skip all findings in this cluster for subsequent iterations
 				for _, f := range clusterFindings {
@@ -1035,7 +1043,7 @@ func findingHeadlines(findings []Finding, limit int) []string {
 
 // --- Prompt builders ---
 
-func buildAuditPrompt(opts AuditOpts, previousFindings []Finding, resolvedThemes *resolvedLedger) string {
+func buildAuditPrompt(opts AuditOpts, previousFindings []Finding, resolvedThemes *resolvedLedger, fixHist *FixHistory) string {
 	var b strings.Builder
 
 	fmt.Fprintf(&b, "# SPRINT AUDIT — Sprint %d: %s\n\n", opts.Sprint.Number, opts.Sprint.Name)
@@ -1129,6 +1137,22 @@ func buildAuditPrompt(opts AuditOpts, previousFindings []Finding, resolvedThemes
 				fmt.Fprintf(&b, "[%s] ", f.Location)
 			}
 			fmt.Fprintf(&b, "%s (%s)\n", f.Description, f.Severity)
+		}
+		b.WriteString("\n")
+	}
+
+	// Anti-capitulation guardrail: when findings have had all fix attempts
+	// rejected, the audit agent tends to declare them "spec-intentional" and
+	// clear them. This instruction prevents that pattern.
+	if rejectedLabels := fixHist.RejectedFindingLabels(actionablePrev); len(rejectedLabels) > 0 {
+		b.WriteString("## Important: Do Not Clear Findings Because Fixes Were Rejected\n\n")
+		b.WriteString("The following findings were raised in prior cycles but ALL fix attempts\n")
+		b.WriteString("were rejected by the fix contract (e.g. out-of-scope files, migration\n")
+		b.WriteString("conflicts). This means the **fix approach** was wrong, NOT the finding\n")
+		b.WriteString("itself. If the issue is still present in the code, you MUST report it\n")
+		b.WriteString("again regardless of fix history:\n\n")
+		for _, label := range rejectedLabels {
+			fmt.Fprintf(&b, "- %s\n", label)
 		}
 		b.WriteString("\n")
 	}

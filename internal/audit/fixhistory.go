@@ -111,6 +111,46 @@ func (h *FixHistory) ForPrompt(findings []Finding, maxBytes int) string {
 	return rendered
 }
 
+// RejectedFindingLabels returns labels for findings that have been targeted
+// by at least one fix attempt where ALL outcomes were REJECTED. These findings
+// are real issues where the fix approach failed, not the finding itself.
+func (h *FixHistory) RejectedFindingLabels(findings []Finding) []string {
+	if h == nil || len(h.attempts) == 0 {
+		return nil
+	}
+	relevantKeys := findingSet(findings)
+	// Track findings that were only ever rejected (never accepted/resolved)
+	allRejected := make(map[string]bool) // key -> true if all attempts rejected
+	for _, attempt := range h.attempts {
+		for _, outcome := range attempt.Outcomes {
+			if _, ok := relevantKeys[outcome.FindingKey]; !ok {
+				continue
+			}
+			if outcome.Status == "REJECTED" {
+				if _, seen := allRejected[outcome.FindingKey]; !seen {
+					allRejected[outcome.FindingKey] = true
+				}
+			} else {
+				allRejected[outcome.FindingKey] = false
+			}
+		}
+	}
+	var labels []string
+	for key, rejected := range allRejected {
+		if !rejected {
+			continue
+		}
+		for _, f := range findings {
+			if f.key() == key {
+				labels = append(labels, findingLabel(f))
+				break
+			}
+		}
+	}
+	sort.Strings(labels)
+	return labels
+}
+
 func attemptTargetsRelevantFinding(attempt FixAttempt, relevantKeys map[string]struct{}) bool {
 	for _, outcome := range attempt.Outcomes {
 		if _, ok := relevantKeys[outcome.FindingKey]; ok {
