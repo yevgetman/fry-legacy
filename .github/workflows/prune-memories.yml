@@ -1,0 +1,39 @@
+name: Prune stale consciousness memories
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'internal/**'
+      - 'cmd/**'
+      - 'templates/**'
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 20
+
+      - name: Generate changelog from push commits
+        id: changelog
+        run: |
+          # Get commit messages from this push
+          CHANGELOG=$(git log --oneline ${{ github.event.before }}..${{ github.sha }} 2>/dev/null || git log --oneline -5)
+          echo "changelog<<CHANGELOG_EOF" >> "$GITHUB_OUTPUT"
+          echo "$CHANGELOG" >> "$GITHUB_OUTPUT"
+          echo "CHANGELOG_EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Prune invalidated memories
+        env:
+          CONSCIOUSNESS_API_SECRET: ${{ secrets.CONSCIOUSNESS_API_SECRET }}
+        run: |
+          RESPONSE=$(curl -sf -X POST \
+            "https://fry-consciousness-api.yevgetman.workers.dev/prune" \
+            -H "Authorization: Bearer $CONSCIOUSNESS_API_SECRET" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n --arg cl "${{ steps.changelog.outputs.changelog }}" '{changelog: $cl}')")
+          echo "$RESPONSE" | jq .
+          PRUNED=$(echo "$RESPONSE" | jq '.stats.memories_pruned // 0')
+          echo "Pruned $PRUNED memories"
