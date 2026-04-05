@@ -147,3 +147,79 @@ func TestValidateHarness_NilChecks(t *testing.T) {
 	result := ValidateHarness(dir, nil)
 	assert.False(t, result.HasIssues())
 }
+
+func TestValidateHarness_UnescapedParensInPattern(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "src"), 0o755))
+
+	t.Run("function call parens flagged", func(t *testing.T) {
+		t.Parallel()
+		checks := []Check{
+			{Sprint: 1, Type: CheckFileContains, Path: "src/schema.prisma", Pattern: "@id @default(uuid())"},
+		}
+		result := ValidateHarness(dir, checks)
+		require.True(t, result.HasIssues())
+		found := false
+		for _, issue := range result.Issues {
+			if issue.Type == "unescaped_regex_metachar" {
+				found = true
+				assert.Contains(t, issue.Message, "unescaped parentheses")
+			}
+		}
+		assert.True(t, found, "expected unescaped_regex_metachar issue")
+	})
+
+	t.Run("min(8) flagged", func(t *testing.T) {
+		t.Parallel()
+		checks := []Check{
+			{Sprint: 2, Type: CheckFileContains, Path: "src/auth.ts", Pattern: "min(8)"},
+		}
+		result := ValidateHarness(dir, checks)
+		require.True(t, result.HasIssues())
+		found := false
+		for _, issue := range result.Issues {
+			if issue.Type == "unescaped_regex_metachar" {
+				found = true
+			}
+		}
+		assert.True(t, found, "expected unescaped_regex_metachar for min(8)")
+	})
+
+	t.Run("escaped parens OK", func(t *testing.T) {
+		t.Parallel()
+		checks := []Check{
+			{Sprint: 1, Type: CheckFileContains, Path: "src/schema.prisma", Pattern: `@id @default\(uuid\(\)\)`},
+		}
+		result := ValidateHarness(dir, checks)
+		for _, issue := range result.Issues {
+			assert.NotEqual(t, "unescaped_regex_metachar", issue.Type)
+		}
+	})
+
+	t.Run("regex group parens OK", func(t *testing.T) {
+		t.Parallel()
+		checks := []Check{
+			{Sprint: 1, Type: CheckFileContains, Path: "src/main.go", Pattern: "^(import|export)"},
+		}
+		result := ValidateHarness(dir, checks)
+		for _, issue := range result.Issues {
+			assert.NotEqual(t, "unescaped_regex_metachar", issue.Type)
+		}
+	})
+
+	t.Run("cmd_output pattern also validated", func(t *testing.T) {
+		t.Parallel()
+		checks := []Check{
+			{Sprint: 1, Type: CheckCmdOutput, Command: "echo test", Pattern: "Array(5)"},
+		}
+		result := ValidateHarness(dir, checks)
+		found := false
+		for _, issue := range result.Issues {
+			if issue.Type == "unescaped_regex_metachar" {
+				found = true
+			}
+		}
+		assert.True(t, found, "expected unescaped_regex_metachar for Array(5)")
+	})
+}

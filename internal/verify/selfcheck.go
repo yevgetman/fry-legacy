@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -52,6 +53,10 @@ func ValidateHarness(projectDir string, checks []Check) *HarnessCheckResult {
 			validateFileTarget(projectDir, c, result)
 		case CheckCmd, CheckCmdOutput, CheckTest:
 			validateCmdTarget(c, result)
+		}
+		// Validate regex patterns for check types that use grep -E.
+		if c.Type == CheckFileContains || c.Type == CheckCmdOutput {
+			validateRegexPattern(c, result)
 		}
 	}
 
@@ -110,6 +115,68 @@ func validateFileTarget(projectDir string, c Check, result *HarnessCheckResult) 
 			})
 		}
 	}
+}
+
+// validateRegexPattern checks that patterns used in grep -E checks are
+// valid regex and flags likely unescaped ERE metacharacters that look like
+// literal code patterns (e.g. function calls with parentheses). This catches
+// the class of bugs where @check_file_contains uses patterns like
+// "@id @default(uuid())" which grep -E interprets differently than intended.
+func validateRegexPattern(c Check, result *HarnessCheckResult) {
+	pattern := strings.TrimSpace(c.Pattern)
+	if pattern == "" {
+		return
+	}
+
+	// Check 1: Is the pattern valid regex at all?
+	if _, err := regexp.Compile(pattern); err != nil {
+		result.Issues = append(result.Issues, HarnessIssue{
+			Sprint:  c.Sprint,
+			Type:    "invalid_regex",
+			Target:  pattern,
+			Message: fmt.Sprintf("pattern is not valid ERE regex: %v", err),
+		})
+		return
+	}
+
+	// Check 2: Detect likely unescaped literal parentheses.
+	// Unescaped () in ERE are grouping operators. If the pattern contains
+	// something that looks like a function call — word( — it's almost certainly
+	// meant to be a literal match, not a regex group.
+	if hasUnescapedLiteralParens(pattern) {
+		result.Issues = append(result.Issues, HarnessIssue{
+			Sprint:  c.Sprint,
+			Type:    "unescaped_regex_metachar",
+			Target:  pattern,
+			Message: "pattern contains unescaped parentheses that look like a literal function call — use \\( and \\) for literal matching in grep -E",
+		})
+	}
+}
+
+// hasUnescapedLiteralParens detects patterns where ( or ) appear unescaped
+// in a context that looks like a literal string rather than a regex group.
+// Heuristic: if a word character immediately precedes ( it looks like a
+// function call (e.g. "default(uuid())", "min(8)") rather than a regex group.
+func hasUnescapedLiteralParens(pattern string) bool {
+	for i := 0; i < len(pattern); i++ {
+		if pattern[i] == '(' && i > 0 {
+			// Check not escaped
+			backslashes := 0
+			for j := i - 1; j >= 0 && pattern[j] == '\\'; j-- {
+				backslashes++
+			}
+			if backslashes%2 == 1 {
+				continue // escaped \(
+			}
+			// Check if preceded by a word character (letter, digit, underscore)
+			prev := pattern[i-1]
+			if (prev >= 'a' && prev <= 'z') || (prev >= 'A' && prev <= 'Z') ||
+				(prev >= '0' && prev <= '9') || prev == '_' {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func validateCmdTarget(c Check, result *HarnessCheckResult) {
