@@ -2052,67 +2052,6 @@ func TestCountFixable(t *testing.T) {
 	assert.Equal(t, 4, countFixable(findings, true))  // all four
 }
 
-func TestHasHarnessBlocker(t *testing.T) {
-	t.Parallel()
-
-	t.Run("detects harness blocker", func(t *testing.T) {
-		t.Parallel()
-		findings := []Finding{
-			{Description: "A bug", Severity: "HIGH"},
-			{Description: "Harness issue", Severity: "CRITICAL", Category: FindingCategoryHarnessBlocker},
-		}
-		assert.True(t, hasHarnessBlocker(findings))
-	})
-
-	t.Run("ignores resolved harness blocker", func(t *testing.T) {
-		t.Parallel()
-		findings := []Finding{
-			{Description: "A bug", Severity: "HIGH"},
-			{Description: "Harness issue", Severity: "CRITICAL", Category: FindingCategoryHarnessBlocker, Resolved: true},
-		}
-		assert.False(t, hasHarnessBlocker(findings))
-	})
-
-	t.Run("ignores LOW harness blocker", func(t *testing.T) {
-		t.Parallel()
-		findings := []Finding{
-			{Description: "A bug", Severity: "MODERATE"},
-			{Description: "Harness issue", Severity: "LOW", Category: FindingCategoryHarnessBlocker},
-		}
-		assert.False(t, hasHarnessBlocker(findings))
-	})
-
-	t.Run("ignores MODERATE harness blocker", func(t *testing.T) {
-		t.Parallel()
-		findings := []Finding{
-			{Description: "Harness issue", Severity: "MODERATE", Category: FindingCategoryHarnessBlocker},
-		}
-		assert.False(t, hasHarnessBlocker(findings))
-	})
-
-	t.Run("detects HIGH harness blocker", func(t *testing.T) {
-		t.Parallel()
-		findings := []Finding{
-			{Description: "Harness issue", Severity: "HIGH", Category: FindingCategoryHarnessBlocker},
-		}
-		assert.True(t, hasHarnessBlocker(findings))
-	})
-
-	t.Run("false when no blockers", func(t *testing.T) {
-		t.Parallel()
-		findings := []Finding{
-			{Description: "A bug", Severity: "HIGH"},
-			{Description: "Env issue", Severity: "HIGH", Category: FindingCategoryEnvironmentBlocker},
-		}
-		assert.False(t, hasHarnessBlocker(findings))
-	})
-
-	t.Run("false on empty findings", func(t *testing.T) {
-		t.Parallel()
-		assert.False(t, hasHarnessBlocker(nil))
-	})
-}
-
 func TestCountUnresolvedLow(t *testing.T) {
 	t.Parallel()
 

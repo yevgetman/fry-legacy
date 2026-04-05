@@ -484,14 +484,6 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 			return blockedResult(lowYieldStopReason), nil
 		}
 
-		// Harness blockers indicate the build infrastructure is broken.
-		// Continuing to fix product defects in a broken environment is wasteful —
-		// exit immediately and surface the blocker for manual intervention.
-		if hasHarnessBlocker(activeFindings) {
-			frylog.Log("  AUDIT: harness_blocker detected — stopping audit (fix agent cannot resolve infrastructure issues)")
-			return blockedResult("harness_blocker"), nil
-		}
-
 		// Outer stale detection (progress-based mode only)
 		if progressBased && cycle > 1 {
 			prevKeys := findingKeySet(knownFindings)
