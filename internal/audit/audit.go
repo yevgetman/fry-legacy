@@ -201,6 +201,16 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 
 		refreshDiff(&opts)
 
+		// On the first cycle, remove nested .git directories left by tools
+		// like create-next-app. These cause gitlink entries that the fix agent
+		// cannot resolve (sandbox blocks rm -rf). Cleaning them here covers
+		// all entry paths (fresh sprint, --continue, failed-partial).
+		if cycle == 1 {
+			if cleaned, cleanErr := git.CleanNestedGitDirs(opts.ProjectDir); cleanErr == nil && len(cleaned) > 0 {
+				frylog.Log("  AUDIT: removed %d nested .git directory(ies): %v", len(cleaned), cleaned)
+			}
+		}
+
 		// Recover files with AD status (in git index but missing from disk).
 		// Runs every cycle, not just once, because engine sessions or fix
 		// rollbacks can re-introduce the condition mid-audit.
