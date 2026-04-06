@@ -522,6 +522,114 @@ func TestHasProgress(t *testing.T) {
 	}
 }
 
+func TestSameKeySet(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		a    map[string]struct{}
+		b    map[string]struct{}
+		want bool
+	}{
+		{
+			name: "both empty",
+			a:    map[string]struct{}{},
+			b:    map[string]struct{}{},
+			want: true,
+		},
+		{
+			name: "identical single key",
+			a:    map[string]struct{}{"foo": {}},
+			b:    map[string]struct{}{"foo": {}},
+			want: true,
+		},
+		{
+			name: "identical multi key",
+			a:    map[string]struct{}{"foo": {}, "bar": {}, "baz": {}},
+			b:    map[string]struct{}{"baz": {}, "bar": {}, "foo": {}},
+			want: true,
+		},
+		{
+			name: "different lengths",
+			a:    map[string]struct{}{"foo": {}, "bar": {}},
+			b:    map[string]struct{}{"foo": {}},
+			want: false,
+		},
+		{
+			name: "same length, different keys",
+			a:    map[string]struct{}{"foo": {}, "bar": {}},
+			b:    map[string]struct{}{"foo": {}, "baz": {}},
+			want: false,
+		},
+		{
+			name: "one empty, one populated",
+			a:    map[string]struct{}{},
+			b:    map[string]struct{}{"foo": {}},
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, sameKeySet(tt.a, tt.b))
+		})
+	}
+}
+
+func TestDecorateFindings(t *testing.T) {
+	t.Parallel()
+
+	t.Run("sets origin and last seen on first decoration", func(t *testing.T) {
+		t.Parallel()
+		findings := []Finding{
+			{Location: "src/handler.go:42", Description: "missing nil check", Severity: "HIGH"},
+		}
+		decorated := decorateFindings(findings, 1)
+		require.Len(t, decorated, 1)
+		assert.Equal(t, 1, decorated[0].OriginCycle)
+		assert.Equal(t, 1, decorated[0].LastSeenCycle)
+		assert.Equal(t, []string{"src/handler.go"}, decorated[0].AffectedFiles)
+		assert.Equal(t, FindingCategoryProductDefect, decorated[0].Category)
+	})
+
+	t.Run("preserves existing origin cycle on re-decoration", func(t *testing.T) {
+		t.Parallel()
+		findings := []Finding{
+			{Location: "src/api.go:10", Description: "issue", Severity: "HIGH", OriginCycle: 1},
+		}
+		decorated := decorateFindings(findings, 3)
+		require.Len(t, decorated, 1)
+		assert.Equal(t, 1, decorated[0].OriginCycle, "origin cycle should be preserved")
+		assert.Equal(t, 3, decorated[0].LastSeenCycle, "last seen cycle should advance")
+	})
+
+	t.Run("normalizes blocker category from explicit field", func(t *testing.T) {
+		t.Parallel()
+		findings := []Finding{
+			{Location: "test/setup.go:5", Description: "missing secret", Severity: "HIGH", Category: "environment_blocker"},
+		}
+		decorated := decorateFindings(findings, 1)
+		require.Len(t, decorated, 1)
+		assert.Equal(t, FindingCategoryEnvironmentBlocker, decorated[0].Category)
+	})
+
+	t.Run("empty input returns empty", func(t *testing.T) {
+		t.Parallel()
+		decorated := decorateFindings(nil, 1)
+		assert.Empty(t, decorated)
+	})
+
+	t.Run("does not mutate input slice", func(t *testing.T) {
+		t.Parallel()
+		findings := []Finding{
+			{Location: "src/x.go:1", Description: "issue", Severity: "HIGH"},
+		}
+		_ = decorateFindings(findings, 5)
+		assert.Equal(t, 0, findings[0].OriginCycle, "input should not be mutated")
+		assert.Equal(t, 0, findings[0].LastSeenCycle, "input should not be mutated")
+	})
+}
+
 // --- effectiveOuterCycles tests ---
 
 func TestEffectiveOuterCycles(t *testing.T) {

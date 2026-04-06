@@ -68,3 +68,17 @@ func TestInvocationPromptsNonEmpty(t *testing.T) {
 	assert.NotEmpty(t, config.AgentInvocationPrompt)
 	assert.NotEmpty(t, config.HealInvocationPrompt)
 }
+
+func TestAgentInvocationPromptIncludesBuildTestVerification(t *testing.T) {
+	t.Parallel()
+
+	// The agent invocation prompt must instruct the sprint agent to verify
+	// its work by running build/test commands before declaring completion.
+	// This is the baseline self-verification that applies regardless of
+	// effort level (the tiered quality directive in prompt.go layers
+	// additional rigor on top of this).
+	assert.Contains(t, config.AgentInvocationPrompt, "verify your work",
+		"AgentInvocationPrompt must instruct the agent to verify its work")
+	assert.Contains(t, config.AgentInvocationPrompt, "build and test commands",
+		"AgentInvocationPrompt must instruct the agent to run build/test commands")
+}
