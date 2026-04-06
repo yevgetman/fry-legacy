@@ -47,7 +47,7 @@ This is the current default behavior. For complex systems with databases, APIs, 
 - Full 7-part prompt structure with comprehensive detail
 - All standard sizing guidelines apply
 - Normal review behavior when enabled
-- Sprint audits use progress-based iteration: continue as long as the fix agent resolves issues or uncovers new ones, up to a safety cap of 12 outer cycles with 7 inner fix iterations per cycle. Stops early if 3 consecutive passes show no progress.
+- Sprint audits use progress-based iteration: continue as long as the fix agent resolves issues or uncovers new ones. Safety caps scale with complexity (4/8/12 outer cycles, 5/7 inner fix iterations). Stops early after 2 consecutive stale outer cycles.
 
 ```bash
 fry --effort high --engine claude
@@ -60,7 +60,7 @@ fry --engine claude
 For high-stakes projects where correctness is paramount. Same sprint count as `high`, but with significantly more rigor per sprint.
 
 - Same sprint count as `high` (4-10), but with higher iteration budgets (30-50 per sprint)
-- Sprint audits use progress-based iteration (same as `high`): continue while the fix agent is making progress, up to a safety cap of 100 outer cycles with 10 inner fix iterations per cycle. When only LOW findings remain, one fix attempt is made before accepting (prevents indefinite cycling on acknowledged LOWs)
+- Sprint audits use progress-based iteration (same as `high`): continue while the fix agent is making progress. Safety caps scale with complexity (6/20/100 outer cycles, 7/10 inner fix iterations). When only LOW findings remain, one fix attempt is made before accepting (prevents indefinite cycling on acknowledged LOWs)
 - Sprint prompts are extended beyond the standard 7-part structure:
   - **Part 8: Analysis & Edge Cases** — enumerates every edge case, race condition, error scenario, and boundary condition
   - **Part 9: Quality Gates** — explicit quality criteria beyond sanity checks (performance targets, security considerations, code review checklist items)
@@ -69,7 +69,7 @@ For high-stakes projects where correctness is paramount. Same sprint count as `h
 - Deviation scope covers the entire epic (same as standard and high — all non-fast effort levels expand `@max_deviation_scope` to `totalSprints`, capped at 10)
 - Review bias shifts from CONTINUE to THOROUGH REVIEW — the reviewer applies heightened scrutiny and recommends DEVIATE for any deviation that could affect system correctness
 - No-op detection threshold is raised from 2 to 3 consecutive iterations, giving the agent more room to iterate
-- A quality directive is injected into every sprint prompt, instructing the agent to handle all edge cases, write defensive code, and validate assumptions
+- A quality directive is injected into every sprint prompt at `standard`+ effort levels. At `max`, this instructs the agent to handle all edge cases, write defensive code, and validate assumptions. At all levels, the agent is told to run build/test commands and review its own diff before declaring completion (see [Sprint Execution — Quality Directive](sprint-execution.md#quality-directive-layer-175))
 
 ```bash
 fry --effort max --engine claude
@@ -198,11 +198,11 @@ When no effort level is set (auto-detect or unset), the default max iterations p
 | Prompt structure | Concise | Moderate 7-part | Full 7-part | Extended 9-part |
 | Scaffolding sprint | Merged into Sprint 1 | Normal | Normal | Normal |
 | Review behavior | Skipped | Normal | Normal | Thorough (lower DEVIATE threshold) |
-| Sprint audit | Skipped | 3 outer cycles, 3 inner fix (bounded); LOW ignored | Progress-based (12 outer, 7 inner); LOW included in fix | Progress-based (100 outer, 10 inner); LOW included in fix; LOW-only → 1 fix then accept |
+| Sprint audit | Skipped | Bounded (2-5 outer, 3 inner by complexity); LOW ignored | Progress-based (4-12 outer, 5-7 inner by complexity); LOW included | Progress-based (6-100 outer, 7-10 inner by complexity); LOW included; LOW-only → 1 fix then accept |
 | Build audit | Skipped | Runs on full epic completion | Runs on full epic completion | Runs on full epic completion |
 | No-op threshold | 2 iterations | 2 iterations | 2 iterations | 3 iterations |
-| Quality directive | No | No | No | Yes (injected into every prompt) |
-| Alignment attempts | 0 (skip) | 3 (fixed) | Up to 10 (progress-based, stuck=2) | Unlimited (progress-based, stuck=3) |
+| Quality directive | No | Yes (check work + run build/test) | Yes (quality focus + run build/test) | Yes (full rigor + run build/test) |
+| Alignment attempts | 0 (skip) | 3 (fixed) | Up to 10 (progress-based, exits after 2 stuck attempts) | Unlimited up to 50 safety cap (progress-based, exits after 3 stuck attempts; mid-loop threshold check after min 10 attempts) |
 | Alignment fail threshold | 20% | 20% | 20% | 10% |
 | Resume alignment attempts | 6 | 6 | 20 | 6 (min) |
 | Compact with agent | Default | Default | Default | Enabled |

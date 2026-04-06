@@ -251,7 +251,7 @@ build_audit_20060102_150405.log
 | Scope | Single sprint's changes | Entire codebase |
 | Timing | After each sprint passes sanity checks | After all sprints complete |
 | Agent design | Two agents (audit + fix) | Single agent (audit + fix in one session) |
-| Iterations | Up to `@max_audit_iterations` (default: 3) | Up to 12 (high) or 100 (max) |
+| Iterations | Up to `@max_audit_iterations` (default: 3) | Up to 12 (standard/high) or 100 (max) |
 | Blocking | CRITICAL/HIGH block the sprint | Non-blocking (advisory) |
 | Output file | `.fry/sprint-audit.txt` (transient) | `build-audit.md` (persisted) |
 | Context | Sprint diff + sprint progress | Full codebase + plan artifacts |

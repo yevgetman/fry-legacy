@@ -44,6 +44,8 @@ Each sprint prompt is assembled in layers, giving the AI agent structured contex
 | 1.25 | Media assets | Manifest of files in `media/` (if directory exists) |
 | 1.5 | User directive | `--user-prompt`, `--user-prompt-file`, or `.fry/user-prompt.txt` |
 | 1.625 | Operational disposition | Fry's behavioral tendencies from `templates/identity/disposition.md` (compiled in) |
+| 1.7 | Mid-build steering | User directive injected mid-build via `.fry/agent-directive.md` (consumed by `fry exit`/steering, if present) |
+| — | Active divergences | Intentional divergences from `.fry/deviation-log.md` filtered to the active sprint (if any are still in scope) |
 | 1.75 | Quality directive | Injected at `standard`+ effort — tiered self-review and build/test verification instructions (see below) |
 | 2 | Strategic plan reference | Pointer to `plans/plan.md` |
 | 3 | Sprint instructions | `@prompt` block from epic |
@@ -127,6 +129,7 @@ After each sprint completes, progress is compacted:
 | `FAIL (audit: SEVERITY)` | Sprint audit found blocking CRITICAL or HIGH issues after all audit cycles |
 | `FAIL (no promise after N iters)` | No promise token found and no sanity checks exist |
 | `FAIL (no prompt)` | Sprint had no prompt text |
+| `PAUSED` | Build paused via `fry exit` at a safe checkpoint |
 | `SKIPPED` | Sprint was not in the run range |
 
 ## Build Logs

@@ -43,7 +43,7 @@ Placed before any `@sprint` block:
 | `@engine_flags <flags>` | Extra CLI flags for the agent (alias: `@codex_flags`) |
 | `@mcp_config <path>` | Path to MCP server configuration file (Claude engine only). See [Engines: MCP](engines.md#mcp-server-configuration). |
 | `@verification <file>` | Sanity checks file (default: `.fry/verification.md`) |
-| `@max_heal_attempts <N>` | Auto-alignment attempts after sanity check failure (default: effort-level default or 3). When explicitly set, overrides effort-level behavior and disables progress detection. Set to 0 to disable alignment. |
+| `@max_heal_attempts <N>` | Auto-alignment attempts after sanity check failure (default: effort-level default or 3). When explicitly set, overrides effort-level behavior and disables progress detection. Set to 0 to disable alignment. **Ignored at `max` effort** — max effort always uses unlimited progress-based alignment regardless of this directive (a warning is logged if you try to set it). |
 | `@max_fail_percent <N>` | Maximum percentage of checks that can fail while still passing the sprint (default: 20; 0 = strict, 100 = always pass). See [Sanity Checks](sanity-checks.md). |
 | `@compact_with_agent` | Use AI agent to summarize sprint progress (default: mechanical extraction) |
 | `@review_between_sprints` | Enable mid-build sprint review (default: disabled) |

@@ -148,10 +148,12 @@ when those labels are missing. Effort is sized later by the triage step against
 the current codebase.
 
 ```bash
-fry-improve                  # full loop (planning if needed + build + PR)
-fry-improve --auto-merge     # merge directly to master
-fry-improve --skip-planning  # build only
-fry config set engine codex  # use Codex for self-improve in this repo
+./.self-improve/orchestrate.sh                  # full loop (planning if needed + build + PR)
+./.self-improve/orchestrate.sh --auto-merge     # merge directly to master
+./.self-improve/orchestrate.sh --skip-build     # planning only
+./.self-improve/orchestrate.sh --skip-planning  # build only
+./.self-improve/orchestrate.sh --dry-run        # preview without making changes
+fry config set engine codex                     # use Codex for self-improve in this repo
 ```
 
 See [Self-Improvement Pipeline](docs/self-improvement.md) for the full architecture, configuration, and operational guide.

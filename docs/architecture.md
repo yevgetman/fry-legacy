@@ -14,22 +14,28 @@ internal/audit/             Post-sprint and post-build semantic audit (sprint au
 internal/cli/               Cobra command definitions (run, prepare, replan, init, exit, clean, status, identity, version, agent, events, team)
 internal/color/             ANSI color output with TTY detection and NO_COLOR support
 internal/config/            Constants: file paths, defaults, version string
+internal/confirm/           File-based interactive prompt IPC for agent LLMs
 internal/consciousness/     Session-based checkpoint persistence, checkpoint distillation, final experience synthesis, upload queue
 internal/continuerun/       Build state collection, LLM analysis, and resume logic for --continue
 internal/docker/            Docker Compose lifecycle management
 internal/engine/            AI engine abstraction (Claude, Codex, Ollama), tier-based model selection, validation
 internal/epic/              Epic file parser, types (Epic, Sprint, EffortLevel), and validator
 internal/git/               Git operations (init, checkpoint, commit)
+internal/githubissue/       GitHub issue fetching via gh CLI and conversion to user prompts
 internal/heal/              Alignment loop (re-run agent on sanity check failure)
 internal/lock/              File-based concurrency lock (PID-based)
 internal/log/               Timestamped logging with verbose mode
 internal/media/             Media directory scanner and manifest builder
 internal/metrics/           Token usage parsing for Claude and Codex engines
+internal/monitor/           Real-time build monitoring (event stream, status snapshots, log tail)
 internal/observer/          Metacognitive event recording, identity, scratchpad continuity, and strict wake-up parsing
 internal/preflight/         Pre-build validation checks
 internal/prepare/           Artifact generation (Steps 0-3), mode handling, project overview
 internal/report/            BuildReport JSON serialization
 internal/review/            Dynamic sprint review, replanning, deviation tracking
+internal/scan/              Codebase scanning (structural, semantic, compact, codebase memories)
+internal/settings/          User settings under ~/.fry/ (telemetry opt-in/out)
+internal/severity/          Issue severity classification for audit findings
 internal/shellhook/         Shell command execution for hooks
 internal/sprint/            Sprint execution loop, prompt assembly, progress tracking
 internal/steering/          File-based IPC for mid-build human intervention (directives, holds, pauses, graceful exits, resume points)
@@ -50,9 +56,13 @@ templates/                  Embedded templates (AGENTS.md, epic-example, verific
 | `fry init` | Scaffold `plans/`, `assets/`, `media/` directories and initialize git |
 | `fry exit` | Request a graceful stop and persist a deterministic resume point |
 | `fry clean` | Archive `.fry/` and root-level build outputs to `.fry-archive/` |
+| `fry destroy` | Remove all fry artifacts completely |
+| `fry config` | Read or write repo-local Fry settings (`get`/`set`) |
 | `fry status` | Show current build state (sprints, progress) without an LLM call |
+| `fry monitor` | Real-time build monitor (event stream, status, log tail) |
 | `fry identity` | Print Fry's current identity (core or full with `--full`) |
 | `fry replan` | Re-run the sprint review and replanning pass |
+| `fry audit` | Standalone AI-powered build audit |
 | `fry version` | Print the Fry version |
 | `fry events` | List build events; `--follow --json` for real-time streaming |
 | `fry team` | Operate the standalone team runtime (tmux workers, tasks, scale, pause/resume, shutdown) |

@@ -76,7 +76,9 @@ When the outer loop discovers MODERATE+ findings, the inner loop works to resolv
 - **No-op detection** — Fry fingerprints the worktree before and after each fix pass. If the fix agent made no material file changes, Fry logs a no-op and increments the stale counter.
 - **Fix attempt history** — The fix prompt includes summaries of prior attempts that targeted the same findings, including verification notes. This helps the fix agent avoid repeating failed approaches.
 - **Behavior-unchanged handling** — If verify reports `BEHAVIOR_UNCHANGED` for a finding across 3+ iterations, the inner loop exits early to let the outer loop try a fresh perspective.
-- **Session continuity** — On Claude and Codex, Fry reuses same-role sessions within audit cycles (audit continuity across outer cycles, fix continuity within one inner loop). Sessions are refreshed when they exceed configured call/prompt/token budgets.
+- **Session continuity** — On Claude and Codex, Fry reuses same-role sessions within audit cycles (audit continuity across outer cycles, fix continuity within one inner loop). Sessions are refreshed when they exceed budgets:
+  - **Audit sessions:** 3 calls, 24KB prompts, 12K tokens, or 8 unresolved findings carried forward
+  - **Fix sessions:** 4 calls, 48KB prompts, 20K tokens, or 10 unresolved findings carried forward
 
 ### Issue tracking across cycles
 
@@ -224,6 +226,7 @@ If the agent forgets to write `.fry/sprint-audit.txt` but its output contains st
 | Code changes | `git diff` of sprint work | First 100KB |
 | Previously identified issues | Findings from prior audit cycles | Cycle 2+ only |
 | Resolved themes | Previously resolved findings | Cycle 2+ only |
+| Fix history | Summary of prior fix attempts and their outcomes (up to 15KB) | Cycle 2+ only |
 | Intentional divergences | `.fry/deviation-log.md` filtered to the active sprint | When relevant |
 
 ## Context Provided to Fix Agent
@@ -247,16 +250,35 @@ After each fix, a verify agent checks resolution:
 
 | Context | Source |
 |---|---|
-| Issues to verify | Numbered list of the current finding set with location and severity |
-| Instructions | Check each issue and report status. Do not scan for new issues. |
+| Issues to verify | Numbered list of the current finding set with location, severity, and recommended fix |
+| Recent fix diff | Git diff from the fix agent's changes (up to 30KB) |
+| Instructions | Check each issue against the actual code and the fix diff. Report status per finding. Do not scan for new issues. |
 
 The verify agent does not look for new issues and does not modify source code.
 
 ## Effort Level Interaction
 
-- **`fast`** — Sprint audits are skipped entirely.
-- **`standard`** — Bounded audit with complexity-aware caps. 2-5 outer cycles, 3-4 inner iterations depending on complexity. LOW findings excluded from fix scope.
-- **`high`** — Higher caps. 4-12 outer cycles, 5-7 inner iterations. **LOW findings included** in fix scope.
-- **`max`** — Largest budget. 6-100 outer cycles, 7-10 inner iterations. **LOW findings included** in fix scope.
+- **`fast`** — Sprint audits are skipped entirely (unless `--always-verify` is passed).
+- **`standard`** — Bounded audit with complexity-aware caps. LOW findings excluded from fix scope.
+- **`high`** — Progress-based exit (continue while making progress, stop after 2 stale outer cycles). **LOW findings included** in fix scope.
+- **`max`** — Same as `high` but with larger safety caps. **LOW findings included** in fix scope. LOW-only findings get one fix attempt before accepting.
+
+### Complexity-Based Caps
+
+Iteration limits scale with the sprint diff complexity (low/moderate/high), not just effort level:
+
+| Effort | Complexity | Outer Cycles | Inner Fix Iterations |
+|--------|-----------|-------------|---------------------|
+| standard | low | 2 | 3 |
+| standard | moderate | 3 | 3 |
+| standard | high | 5 | 3 |
+| high | low | 4 | 5 |
+| high | moderate | 8 | 5 |
+| high | high | 12 | 7 |
+| max | low | 6 | 7 |
+| max | moderate | 20 | 7 |
+| max | high | 100 | 10 |
+
+At **high** and **max** effort, these caps are safety valves — the actual exit is governed by progress-based stale detection (2 consecutive outer cycles with no finding-set changes).
 
 When `@max_audit_iterations` is explicitly set, it is always respected as the outer cycle cap regardless of effort level.

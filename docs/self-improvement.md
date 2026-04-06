@@ -291,18 +291,23 @@ During planning, if the journal exists, it is exported to `assets/build-journal.
 
 ### Running manually
 
+The orchestrator is invoked via the bash script at `.self-improve/orchestrate.sh` (run from the fry repo root):
+
 ```bash
 # Full loop (planning if needed + build + PR)
-fry-improve
+./.self-improve/orchestrate.sh
 
 # Full loop with auto-merge
-fry-improve --auto-merge
+./.self-improve/orchestrate.sh --auto-merge
 
 # Build only (skip planning)
-fry-improve --skip-planning
+./.self-improve/orchestrate.sh --skip-planning
 
-# Preview what would happen
-fry-improve --dry-run
+# Planning only (skip build)
+./.self-improve/orchestrate.sh --skip-build
+
+# Preview what would happen (no Fry invocations or git mutations)
+./.self-improve/orchestrate.sh --dry-run
 ```
 
 ### Running on a schedule
