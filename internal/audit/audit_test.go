@@ -856,7 +856,7 @@ func TestBuildVerifyPrompt(t *testing.T) {
 		{Location: "src/main.go:10", Description: "Null pointer", Severity: "CRITICAL"},
 		{Description: "Missing validation", Severity: "HIGH"},
 	}
-	prompt := buildVerifyPrompt(opts, findings)
+	prompt := buildVerifyPrompt(opts, findings, "")
 
 	assert.Contains(t, prompt, "# VERIFY FIXES")
 	assert.Contains(t, prompt, "Do NOT look for new issues")

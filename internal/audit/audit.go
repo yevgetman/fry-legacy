@@ -541,9 +541,12 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 				continue
 			}
 
+			// Capture what the fix agent changed so verify can see the diff
+			fixDiff, _ := git.GitDiffForAudit(ctx, opts.ProjectDir)
+
 			// Run verify for ALL unresolved findings
 			if verifyErr := runVerifyPass(ctx, opts, unresolved, activeFindings, cycle, fixIter, maxInner, maxOuter,
-				activeBlockerCounts, auditMetrics, fixHistory, buildLogsDir, auditFilePath, promptPath, includeLow); verifyErr != nil {
+				activeBlockerCounts, auditMetrics, fixHistory, buildLogsDir, auditFilePath, promptPath, includeLow, fixDiff); verifyErr != nil {
 				return nil, verifyErr
 			}
 
@@ -839,6 +842,18 @@ func buildAuditPrompt(opts AuditOpts, previousFindings []Finding, resolvedThemes
 		b.WriteString("was attempted — verify the actual code state.\n\n")
 	}
 
+	// Fix history — what was tried and what happened (cycle 2+ only)
+	if fixHist != nil && len(actionablePrev) > 0 {
+		if rendered := fixHist.ForPrompt(actionablePrev, 15_000); rendered != "" {
+			b.WriteString("## Previous Fix Attempts\n\n")
+			b.WriteString("The fix agent has already attempted to resolve some of these issues.\n")
+			b.WriteString("If you re-raise a finding, consider suggesting a DIFFERENT approach\n")
+			b.WriteString("than what was already tried.\n\n")
+			b.WriteString(rendered)
+			b.WriteString("\n")
+		}
+	}
+
 	// Resolved themes (cycle 2+ with resolved findings)
 	if resolvedThemes != nil && resolvedThemes.len() > 0 {
 		b.WriteString("## Resolved Themes (Do Not Reopen Without Justification)\n\n")
@@ -1124,7 +1139,7 @@ func buildFixPrompt(opts AuditOpts, findings []Finding, resolved *resolvedLedger
 	return b.String()
 }
 
-func buildVerifyPrompt(opts AuditOpts, findings []Finding) string {
+func buildVerifyPrompt(opts AuditOpts, findings []Finding, recentDiff string) string {
 	var b strings.Builder
 
 	fmt.Fprintf(&b, "# VERIFY FIXES — Sprint %d: %s\n\n", opts.Sprint.Number, opts.Sprint.Name)
@@ -1135,6 +1150,19 @@ func buildVerifyPrompt(opts AuditOpts, findings []Finding) string {
 	b.WriteString("Base your judgment on the current repository state, not on prior notes or claimed fixes.\n\n")
 	b.WriteString("Use `BEHAVIOR_UNCHANGED` when the recent remediation did not materially change the executable code path for the issue.\n")
 	b.WriteString("That includes comment-only, rationale-only, note-only, logging-only, or otherwise non-behavioral edits.\n\n")
+
+	// Include the diff from the most recent fix pass so the verify agent can
+	// see exactly what changed without re-reading entire files.
+	if diff := strings.TrimSpace(recentDiff); diff != "" {
+		const maxVerifyDiffBytes = 30_000
+		if len(diff) > maxVerifyDiffBytes {
+			diff = textutil.TruncateUTF8(diff, maxVerifyDiffBytes) + "\n...(diff truncated)"
+		}
+		b.WriteString("## Changes Made by Fix Agent\n")
+		b.WriteString("```diff\n")
+		b.WriteString(diff)
+		b.WriteString("\n```\n\n")
+	}
 
 	b.WriteString("Write your results to .fry/sprint-audit.txt in this format:\n\n")
 	b.WriteString("For each issue:\n")
@@ -1151,7 +1179,11 @@ func buildVerifyPrompt(opts AuditOpts, findings []Finding) string {
 		if f.Location != "" {
 			fmt.Fprintf(&b, "[%s] ", f.Location)
 		}
-		fmt.Fprintf(&b, "%s (%s)\n", f.Description, f.Severity)
+		fmt.Fprintf(&b, "%s (%s)", f.Description, f.Severity)
+		if f.RecommendedFix != "" {
+			fmt.Fprintf(&b, " — expected fix: %s", f.RecommendedFix)
+		}
+		b.WriteString("\n")
 	}
 
 	return b.String()
@@ -2003,10 +2035,11 @@ func runVerifyPass(
 	fixHistory *FixHistory,
 	buildLogsDir, auditFilePath, promptPath string,
 	includeLow bool,
+	recentFixDiff string,
 ) error {
 	_ = os.Remove(auditFilePath)
 
-	verifyPrompt := buildVerifyPrompt(opts, unresolved)
+	verifyPrompt := buildVerifyPrompt(opts, unresolved, recentFixDiff)
 	if err := writePromptFile(promptPath, verifyPrompt); err != nil {
 		return fmt.Errorf("run audit loop: write verify prompt: %w", err)
 	}

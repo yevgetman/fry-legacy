@@ -19,7 +19,7 @@ func TestBuildVerifyPromptRequestsNotes(t *testing.T) {
 	t.Parallel()
 
 	opts := makeOpts(t, &stubEngine{name: "codex"})
-	prompt := buildVerifyPrompt(opts, []Finding{{Description: "Issue A", Severity: "HIGH"}})
+	prompt := buildVerifyPrompt(opts, []Finding{{Description: "Issue A", Severity: "HIGH"}}, "")
 
 	assert.Contains(t, prompt, "**Notes:**")
 	assert.Contains(t, prompt, "BEHAVIOR_UNCHANGED")
