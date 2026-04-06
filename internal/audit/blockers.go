@@ -16,18 +16,6 @@ var (
 	categoryRe       = regexp.MustCompile(`(?i)\*?\*?Category:\*?\*?\s*(.+)`)
 	blockerDetailsRe = regexp.MustCompile(`(?i)\*?\*?Blocker\s*Details:\*?\*?\s*(.+)`)
 
-	envBlockerHints = []string{
-		"env var", "environment variable", "missing secret", "missing credential", "missing credentials",
-		"supabase_", "api key", "service key", "database url", ".env", "bootstrap prerequisite",
-	}
-	harnessBlockerHints = []string{
-		"docker", "testcontainers", "harness", "fixture", "bootstrap failed", "test bootstrap",
-		"localstack", "emulator", "cannot start test", "ci runtime",
-	}
-	externalDependencyHints = []string{
-		"external service", "third-party", "dependency unavailable", "service unavailable",
-		"network unreachable", "dns failure", "rate limit", "quota exceeded", "upstream",
-	}
 )
 
 func normalizeFindingCategory(value string) string {
@@ -44,36 +32,6 @@ func normalizeFindingCategory(value string) string {
 	default:
 		return FindingCategoryProductDefect
 	}
-}
-
-func inferFindingCategory(f Finding) string {
-	text := strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(strings.Join([]string{
-		f.Description,
-		f.BlockerDetails,
-		f.RecommendedFix,
-	}, " "))), " "))
-	if text == "" {
-		return FindingCategoryProductDefect
-	}
-	if containsAnyHint(text, envBlockerHints) {
-		return FindingCategoryEnvironmentBlocker
-	}
-	if containsAnyHint(text, harnessBlockerHints) {
-		return FindingCategoryHarnessBlocker
-	}
-	if containsAnyHint(text, externalDependencyHints) {
-		return FindingCategoryExternalDependencyBlocker
-	}
-	return FindingCategoryProductDefect
-}
-
-func containsAnyHint(text string, hints []string) bool {
-	for _, hint := range hints {
-		if strings.Contains(text, hint) {
-			return true
-		}
-	}
-	return false
 }
 
 func (f Finding) categoryOrDefault() string {
