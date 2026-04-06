@@ -114,7 +114,16 @@ type AuditResult struct {
 const (
 	maxAuditExecutiveBytes = 2_000
 	maxAuditCodebaseBytes  = 8_000
-	maxInnerStaleIterations = 2 // inner loop stale threshold
+
+	// Inner loop stale threshold: how many consecutive fix iterations with
+	// zero new resolutions before the inner loop exits and a fresh outer
+	// audit scan begins.
+	innerStaleThreshold = 2
+
+	// Outer loop stale threshold: how many consecutive outer cycles with
+	// zero net progress (no new findings resolved, no new findings discovered
+	// that differ from the resolved ledger) before the audit exits.
+	outerStaleThreshold = 2
 )
 
 // RunAuditLoop runs a two-level audit loop for a sprint.
@@ -154,6 +163,9 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 
 	var knownFindings []Finding // tracked across outer cycles
 	resolved := newResolvedLedger()
+	progressBased := isProgressBased(opts.Epic)
+	outerStaleCount := 0
+	prevActionableCount := 0
 	var lastCycle int
 
 	for cycle := 1; cycle <= maxOuter; cycle++ {
@@ -216,11 +228,19 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 		}
 
 		auditModel := engine.ResolveModel(opts.Epic.AuditModel, opts.Engine.Name(), string(opts.Epic.EffortLevel), engine.SessionAudit)
-		frylog.Log(
-			"▶ AUDIT  sprint %d/%d \"%s\"  cycle %d/%d  engine=%s  model=%s",
-			opts.Sprint.Number, opts.Epic.TotalSprints, opts.Sprint.Name,
-			cycle, maxOuter, opts.Engine.Name(), auditModel,
-		)
+		if progressBased {
+			frylog.Log(
+				"▶ AUDIT  sprint %d/%d \"%s\"  cycle %d (progress-based, cap %d)  engine=%s  model=%s",
+				opts.Sprint.Number, opts.Epic.TotalSprints, opts.Sprint.Name,
+				cycle, maxOuter, opts.Engine.Name(), auditModel,
+			)
+		} else {
+			frylog.Log(
+				"▶ AUDIT  sprint %d/%d \"%s\"  cycle %d/%d  engine=%s  model=%s",
+				opts.Sprint.Number, opts.Epic.TotalSprints, opts.Sprint.Name,
+				cycle, maxOuter, opts.Engine.Name(), auditModel,
+			)
+		}
 
 		// Run audit agent
 		auditLogPath := filepath.Join(buildLogsDir,
@@ -362,6 +382,38 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 		}
 
 		fixableCount := countFixableProductFindings(activeFindings, includeLow)
+
+		// Outer loop progress detection (high/max effort):
+		// If the fresh audit didn't resolve any previously-known issues AND
+		// didn't discover genuinely new issues, the outer loop is stalling.
+		if progressBased && cycle > 1 {
+			currentActionable := countActionableFindings(activeFindings)
+			madeProgress := false
+			if currentActionable < prevActionableCount {
+				// Net reduction in actionable findings — progress
+				madeProgress = true
+			} else if cycle > 1 && len(knownFindings) > 0 {
+				// Check if the finding set actually changed
+				prevKeys := findingKeySet(knownFindings)
+				currKeys := findingKeySet(activeFindings)
+				if !sameKeySet(prevKeys, currKeys) {
+					madeProgress = true
+				}
+			}
+			if madeProgress {
+				outerStaleCount = 0
+			} else {
+				outerStaleCount++
+				frylog.Log("  AUDIT: no outer-loop progress detected (%d/%d stale cycles)", outerStaleCount, outerStaleThreshold)
+				if outerStaleCount >= outerStaleThreshold {
+					frylog.Log("  AUDIT: stopping — outer loop stalled after %d consecutive cycles without progress", outerStaleCount)
+					auditMetrics.RecordCycleSummary(cycle)
+					break
+				}
+			}
+		}
+		prevActionableCount = countActionableFindings(activeFindings)
+
 		frylog.Log("  AUDIT: %s — entering fix loop (%d issues)...", formatSeverityCounts(effectiveCounts), fixableCount)
 
 		// Freeze finding set for inner loop (FIFO discipline)
@@ -394,11 +446,11 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 			for _, signal := range behaviorSignals {
 				if signal.Count >= 3 {
 					frylog.Log("  AUDIT FIX: behavior unchanged for %s across %d verify passes — moving to re-audit", signal.Label, signal.Count)
-					innerStaleCount = maxInnerStaleIterations
+					innerStaleCount = innerStaleThreshold
 					break
 				}
 			}
-			if innerStaleCount >= maxInnerStaleIterations {
+			if innerStaleCount >= innerStaleThreshold {
 				break
 			}
 			fixPromptOpts := opts
@@ -482,7 +534,7 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 					DiffSummary: "no changes",
 				})
 				innerStaleCount++
-				if innerStaleCount >= maxInnerStaleIterations {
+				if innerStaleCount >= innerStaleThreshold {
 					frylog.Log("  AUDIT FIX: no progress after %d fix iterations — moving to re-audit", fixIter)
 					break
 				}
@@ -508,7 +560,7 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 			// Inner stale detection
 			if nowResolved <= lastResolvedCount {
 				innerStaleCount++
-				if innerStaleCount >= maxInnerStaleIterations {
+				if innerStaleCount >= innerStaleThreshold {
 					frylog.Log("  AUDIT FIX: no progress after %d fix iterations — moving to re-audit", fixIter)
 					break
 				}
@@ -789,12 +841,16 @@ func buildAuditPrompt(opts AuditOpts, previousFindings []Finding, resolvedThemes
 
 	// Resolved themes (cycle 2+ with resolved findings)
 	if resolvedThemes != nil && resolvedThemes.len() > 0 {
-		b.WriteString("## Resolved Themes (Do Not Reopen)\n\n")
+		b.WriteString("## Resolved Themes (Do Not Reopen Without Justification)\n\n")
 		b.WriteString("The following issues were identified and resolved in earlier audit cycles.\n")
-		b.WriteString("Do NOT re-raise these unless you observe a genuine regression (the code is\n")
-		b.WriteString("now WORSE than before the fix). Reworded versions of resolved findings will be\n")
-		b.WriteString("automatically suppressed. If the relevant code state is unchanged but you still\n")
-		b.WriteString("believe the issue must be reopened, include **New Evidence** explaining why.\n\n")
+		b.WriteString("Do NOT re-raise these unless you observe a genuine regression — meaning\n")
+		b.WriteString("the fix itself introduced a new problem, or a subsequent change broke the\n")
+		b.WriteString("original fix. If you believe a resolved issue has genuinely regressed, you\n")
+		b.WriteString("MUST include a **New Evidence** field explaining specifically what changed\n")
+		b.WriteString("in the code that caused the regression. Simply restating the original issue\n")
+		b.WriteString("under different wording wastes audit cycles. The outer audit loop tracks\n")
+		b.WriteString("progress — re-raising resolved issues without evidence causes the audit\n")
+		b.WriteString("to exit as stalled.\n\n")
 		i := 0
 		for _, f := range resolvedThemes.entries {
 			i++
@@ -1317,6 +1373,18 @@ func findingKeySet(findings []Finding) map[string]struct{} {
 	return keys
 }
 
+func sameKeySet(a, b map[string]struct{}) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k := range a {
+		if _, ok := b[k]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 // --- Theme matching and reopen detection ---
 
 // stopWords contains common English function words excluded from theme matching.
@@ -1671,6 +1739,15 @@ func totalSeverityCount(counts map[string]int) int {
 		total += count
 	}
 	return total
+}
+
+// isProgressBased returns true when the audit should run until progress stalls
+// rather than stopping at a fixed iteration count. Applies at high and max effort.
+func isProgressBased(ep *epic.Epic) bool {
+	if ep == nil {
+		return false
+	}
+	return ep.EffortLevel == epic.EffortHigh || ep.EffortLevel == epic.EffortMax
 }
 
 func isAuditPass(maxSeverity string) bool {

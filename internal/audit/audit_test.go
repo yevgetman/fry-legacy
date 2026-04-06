@@ -436,7 +436,6 @@ func TestGroupByCycle(t *testing.T) {
 	assert.Len(t, groups[2].findings, 1)
 }
 
-
 // --- filterUnresolved tests ---
 
 func TestFilterUnresolved(t *testing.T) {
@@ -2026,7 +2025,6 @@ func TestResolvedLedger(t *testing.T) {
 	assert.False(t, ok)
 }
 
-
 func TestAuditPromptIncludesResolvedThemes(t *testing.T) {
 	t.Parallel()
 
@@ -2039,10 +2037,10 @@ func TestAuditPromptIncludesResolvedThemes(t *testing.T) {
 
 	prompt := buildAuditPrompt(opts, nil, ledger, nil)
 
-	assert.Contains(t, prompt, "## Resolved Themes (Do Not Reopen)")
+	assert.Contains(t, prompt, "## Resolved Themes (Do Not Reopen Without Justification)")
 	assert.Contains(t, prompt, "SQL injection")
 	assert.Contains(t, prompt, "Missing validation")
-	assert.Contains(t, prompt, "automatically suppressed")
+	assert.Contains(t, prompt, "re-raising resolved issues without evidence causes the audit")
 }
 
 func TestAuditPromptNoResolvedThemesOnCycle1(t *testing.T) {
@@ -2063,7 +2061,6 @@ func TestAuditPromptAntiReopenInstruction(t *testing.T) {
 	assert.Contains(t, prompt, "previously resolved issue seems to recur under different wording")
 	assert.Contains(t, prompt, "New Evidence")
 }
-
 
 func TestRunAuditLoopUsesSameRoleSessionContinuity(t *testing.T) {
 	t.Parallel()
