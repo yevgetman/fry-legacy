@@ -44,26 +44,26 @@ type CycleProductivity struct {
 
 // AuditMetricsSnapshot is the small, monitor-friendly subset surfaced in build status.
 type AuditMetricsSnapshot struct {
-	TotalCalls       int     `json:"total_calls"`
-	DurationMs       int64   `json:"duration_ms"`
-	NoOpFixCalls     int     `json:"no_op_fix_calls"`
-	NoOpRate         float64 `json:"no_op_rate"`
-	VerifyCalls      int     `json:"verify_calls"`
-	VerifyResolutions int    `json:"verify_resolutions"`
-	VerifyYield      float64 `json:"verify_yield"`
-	SessionRefreshes int     `json:"session_refreshes"`
+	TotalCalls        int     `json:"total_calls"`
+	DurationMs        int64   `json:"duration_ms"`
+	NoOpFixCalls      int     `json:"no_op_fix_calls"`
+	NoOpRate          float64 `json:"no_op_rate"`
+	VerifyCalls       int     `json:"verify_calls"`
+	VerifyResolutions int     `json:"verify_resolutions"`
+	VerifyYield       float64 `json:"verify_yield"`
+	SessionRefreshes  int     `json:"session_refreshes"`
 }
 
 // AuditMetrics accumulates per-call audit telemetry for one RunAuditLoop invocation.
 type AuditMetrics struct {
-	Calls             []CallMetric        `json:"calls"`
-	CycleSummaries    []CycleProductivity `json:"cycle_summaries,omitempty"`
-	OuterCycles       int                 `json:"outer_cycles"`
-	ContentComplexity ComplexityTier      `json:"content_complexity,omitempty"`
-	ConvergedAtCycle  int                 `json:"converged_at_cycle,omitempty"`
-	FinalFindingCount int                 `json:"final_finding_count"`
-	EscapedToBuildAudit int              `json:"escaped_to_build_audit,omitempty"`
-	SessionRefreshes  int                 `json:"session_refreshes,omitempty"`
+	Calls               []CallMetric        `json:"calls"`
+	CycleSummaries      []CycleProductivity `json:"cycle_summaries,omitempty"`
+	OuterCycles         int                 `json:"outer_cycles"`
+	ContentComplexity   ComplexityTier      `json:"content_complexity,omitempty"`
+	ConvergedAtCycle    int                 `json:"converged_at_cycle,omitempty"`
+	FinalFindingCount   int                 `json:"final_finding_count"`
+	EscapedToBuildAudit int                 `json:"escaped_to_build_audit,omitempty"`
+	SessionRefreshes    int                 `json:"session_refreshes,omitempty"`
 }
 
 func (m *AuditMetrics) Record(cm CallMetric) {
@@ -250,15 +250,15 @@ func (m *AuditMetrics) Snapshot() AuditMetricsSnapshot {
 
 func (m *AuditMetrics) MarshalJSON() ([]byte, error) {
 	type auditMetricsJSON struct {
-		Calls             []CallMetric        `json:"calls"`
-		CycleSummaries    []CycleProductivity `json:"cycle_summaries,omitempty"`
-		OuterCycles       int                 `json:"outer_cycles"`
-		ContentComplexity ComplexityTier      `json:"content_complexity,omitempty"`
-		ConvergedAtCycle  int                 `json:"converged_at_cycle,omitempty"`
-		FinalFindingCount int                 `json:"final_finding_count"`
-		EscapedToBuildAudit int              `json:"escaped_to_build_audit,omitempty"`
-		SessionRefreshes  int                 `json:"session_refreshes,omitempty"`
-		Summary           AuditMetricsSnapshot `json:"summary"`
+		Calls               []CallMetric         `json:"calls"`
+		CycleSummaries      []CycleProductivity  `json:"cycle_summaries,omitempty"`
+		OuterCycles         int                  `json:"outer_cycles"`
+		ContentComplexity   ComplexityTier       `json:"content_complexity,omitempty"`
+		ConvergedAtCycle    int                  `json:"converged_at_cycle,omitempty"`
+		FinalFindingCount   int                  `json:"final_finding_count"`
+		EscapedToBuildAudit int                  `json:"escaped_to_build_audit,omitempty"`
+		SessionRefreshes    int                  `json:"session_refreshes,omitempty"`
+		Summary             AuditMetricsSnapshot `json:"summary"`
 	}
 
 	payload := auditMetricsJSON{

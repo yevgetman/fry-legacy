@@ -392,13 +392,13 @@ sessions_spawn({
 
 ### Effort levels
 
-| Level | Sprints | Alignment | Review | Audit | Use case |
-|-------|---------|-----------|--------|-------|----------|
-| fast | 1-2 | Skip | No | No | Quick fixes, one-file changes |
-| standard | 2-4 | 3 attempts | No | Sprint only | Standard features |
-| high | 4-10 | 10 + progress detection | Yes | Both | Complex features |
-| max | Max rigor | Unlimited + progress | Yes | Both + deep | Critical/large work |
-| auto | Triage decides | Based on triage | Based on triage | Based on triage | Let Fry decide |
+| Level | Sprints | Self-Check | Alignment | Review | Audit | Use case |
+|-------|---------|------------|-----------|--------|-------|----------|
+| fast | 1-2 | No | Skip | No | No | Quick fixes, one-file changes |
+| standard | 2-4 | Build/test + diff review | 3 attempts | No | Sprint only | Standard features |
+| high | 4-10 | Build/test + diff review + quality focus | 10 + progress detection | Yes | Both | Complex features |
+| max | Max rigor | Build/test + diff review + full rigor | Unlimited + progress | Yes | Both + deep | Critical/large work |
+| auto | Triage decides | Based on triage | Based on triage | Based on triage | Based on triage | Let Fry decide |
 
 ### Engine differences
 

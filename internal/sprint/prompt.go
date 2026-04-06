@@ -114,23 +114,43 @@ func AssemblePrompt(opts PromptOpts) (string, error) {
 		}
 	}
 
-	// Layer 1.75: Effort directive (only for max)
-	if opts.EffortLevel == epic.EffortMax {
+	// Layer 1.75: Quality directive (standard+ effort levels)
+	if opts.EffortLevel == epic.EffortStandard || opts.EffortLevel == epic.EffortHigh || opts.EffortLevel == epic.EffortMax {
 		b.WriteString("# ===== QUALITY DIRECTIVE =====\n")
-		b.WriteString("# This build is running at MAX effort. Apply heightened rigor:\n")
-		if opts.Mode == "writing" {
-			b.WriteString("# - Apply heightened editorial rigor to every paragraph\n")
-			b.WriteString("# - Consider audience engagement and narrative flow at every level\n")
-			b.WriteString("# - Verify factual claims and ensure internal consistency\n")
-			b.WriteString("# - Vary sentence structure and maintain voice consistency throughout\n")
-			b.WriteString("# - Review your own output each iteration for quality before proceeding\n\n")
-		} else {
-			b.WriteString("# - Consider and handle ALL edge cases, not just common ones\n")
-			b.WriteString("# - Add comprehensive error handling with descriptive messages\n")
-			b.WriteString("# - Write defensive code — validate assumptions, check invariants\n")
-			b.WriteString("# - Consider performance implications of every data structure choice\n")
-			b.WriteString("# - Review your own output each iteration for correctness before proceeding\n\n")
+		switch opts.EffortLevel {
+		case epic.EffortMax:
+			b.WriteString("# This build is running at MAX effort. Apply heightened rigor:\n")
+			if opts.Mode == "writing" {
+				b.WriteString("# - Apply heightened editorial rigor to every paragraph\n")
+				b.WriteString("# - Consider audience engagement and narrative flow at every level\n")
+				b.WriteString("# - Verify factual claims and ensure internal consistency\n")
+				b.WriteString("# - Vary sentence structure and maintain voice consistency throughout\n")
+			} else {
+				b.WriteString("# - Consider and handle ALL edge cases, not just common ones\n")
+				b.WriteString("# - Add comprehensive error handling with descriptive messages\n")
+				b.WriteString("# - Write defensive code — validate assumptions, check invariants\n")
+				b.WriteString("# - Consider performance implications of every data structure choice\n")
+			}
+		case epic.EffortHigh:
+			b.WriteString("# This build is running at HIGH effort. Apply careful attention to quality:\n")
+			if opts.Mode == "writing" {
+				b.WriteString("# - Ensure clarity and coherence across sections\n")
+				b.WriteString("# - Verify factual claims and internal consistency\n")
+			} else {
+				b.WriteString("# - Handle error cases and likely edge conditions\n")
+				b.WriteString("# - Write clear, maintainable code with appropriate error handling\n")
+			}
+		case epic.EffortStandard:
+			b.WriteString("# Check your work before declaring this sprint complete:\n")
 		}
+		// Self-verification applies at all levels in this block.
+		if opts.Mode == "writing" {
+			b.WriteString("# - Before declaring completion, re-read your output and fix any issues you find\n")
+		} else {
+			b.WriteString("# - Before declaring completion, run the project's build and test commands\n")
+			b.WriteString("#   (e.g., go build ./..., go test ./..., make build, npm test) and fix failures\n")
+		}
+		b.WriteString("# - Review your own diff for mistakes, missing logic, and incomplete work\n\n")
 	}
 
 	// Layer 2: Strategic plan reference

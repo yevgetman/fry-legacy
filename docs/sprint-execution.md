@@ -44,13 +44,27 @@ Each sprint prompt is assembled in layers, giving the AI agent structured contex
 | 1.25 | Media assets | Manifest of files in `media/` (if directory exists) |
 | 1.5 | User directive | `--user-prompt`, `--user-prompt-file`, or `.fry/user-prompt.txt` |
 | 1.625 | Operational disposition | Fry's behavioral tendencies from `templates/identity/disposition.md` (compiled in) |
-| 1.75 | Quality directive | Injected at `max` effort only — instructs agent to handle all edge cases, write defensive code, validate assumptions |
+| 1.75 | Quality directive | Injected at `standard`+ effort — tiered self-review and build/test verification instructions (see below) |
 | 2 | Strategic plan reference | Pointer to `plans/plan.md` |
 | 3 | Sprint instructions | `@prompt` block from epic |
 | 4 | Iteration memory | `.fry/sprint-progress.txt` + `.fry/epic-progress.txt` |
 | 5 | Completion signal | Promise token pattern |
 
 The assembled prompt is written to `.fry/prompt.md` before each agent invocation.
+
+### Quality Directive (Layer 1.75)
+
+The quality directive instructs the sprint agent to verify its own work before declaring completion. It is injected at `standard`, `high`, and `max` effort levels (not `fast`). The rigor scales with effort:
+
+| Effort | Quality Focus | Self-Verification |
+|--------|--------------|-------------------|
+| `standard` | General "check your work" | Run build/test commands, review own diff |
+| `high` | Error handling, maintainability (code); clarity, consistency (writing) | Run build/test commands, review own diff |
+| `max` | All edge cases, defensive code, performance (code); editorial rigor, voice, engagement (writing) | Run build/test commands, review own diff |
+
+The self-verification instruction tells the agent to run the project's build and test commands (e.g., `go build ./...`, `go test ./...`, `make build`, `npm test`) and fix any failures before outputting the promise token. For writing-mode builds, the agent is instead told to re-read its output and fix issues.
+
+This reduces the burden on downstream quality gates (alignment loop, sprint audit) by catching mechanical failures — compilation errors, test regressions, obvious mistakes — while the agent still has full context.
 
 **Note:** Supplementary assets (`assets/` directory) are **not** included in sprint prompts. Their contents are injected only during `fry prepare` and baked into `plans/plan.md` and `.fry/epic.md`. See [Supplementary Assets](supplementary-assets.md).
 

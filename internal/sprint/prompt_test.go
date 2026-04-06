@@ -27,9 +27,47 @@ func TestAssemblePrompt_MaxEffort(t *testing.T) {
 	assert.Contains(t, prompt, "QUALITY DIRECTIVE")
 	assert.Contains(t, prompt, "MAX effort")
 	assert.Contains(t, prompt, "heightened rigor")
+	assert.Contains(t, prompt, "run the project's build and test commands")
+	assert.Contains(t, prompt, "Review your own diff")
 }
 
-func TestAssemblePrompt_LowEffort(t *testing.T) {
+func TestAssemblePrompt_HighEffort(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	prompt, err := AssemblePrompt(PromptOpts{
+		ProjectDir:   dir,
+		SprintPrompt: "Build the thing.",
+		Promise:      "DONE",
+		EffortLevel:  epic.EffortHigh,
+	})
+	require.NoError(t, err)
+	assert.Contains(t, prompt, "QUALITY DIRECTIVE")
+	assert.Contains(t, prompt, "HIGH effort")
+	assert.Contains(t, prompt, "Handle error cases")
+	assert.Contains(t, prompt, "run the project's build and test commands")
+	assert.NotContains(t, prompt, "ALL edge cases")
+}
+
+func TestAssemblePrompt_StandardEffort(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	prompt, err := AssemblePrompt(PromptOpts{
+		ProjectDir:   dir,
+		SprintPrompt: "Build the thing.",
+		Promise:      "DONE",
+		EffortLevel:  epic.EffortStandard,
+	})
+	require.NoError(t, err)
+	assert.Contains(t, prompt, "QUALITY DIRECTIVE")
+	assert.Contains(t, prompt, "Check your work")
+	assert.Contains(t, prompt, "run the project's build and test commands")
+	assert.NotContains(t, prompt, "heightened rigor")
+	assert.NotContains(t, prompt, "HIGH effort")
+}
+
+func TestAssemblePrompt_FastEffort(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -57,20 +95,6 @@ func TestAssemblePrompt_NoEffort(t *testing.T) {
 	assert.NotContains(t, prompt, "QUALITY DIRECTIVE")
 }
 
-func TestAssemblePrompt_HighEffort(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	prompt, err := AssemblePrompt(PromptOpts{
-		ProjectDir:   dir,
-		SprintPrompt: "Build the thing.",
-		Promise:      "DONE",
-		EffortLevel:  epic.EffortHigh,
-	})
-	require.NoError(t, err)
-	assert.NotContains(t, prompt, "QUALITY DIRECTIVE")
-}
-
 func TestAssemblePrompt_WritingMode_MaxEffort(t *testing.T) {
 	t.Parallel()
 
@@ -86,7 +110,45 @@ func TestAssemblePrompt_WritingMode_MaxEffort(t *testing.T) {
 	assert.Contains(t, prompt, "QUALITY DIRECTIVE")
 	assert.Contains(t, prompt, "editorial rigor")
 	assert.Contains(t, prompt, "audience engagement")
+	assert.Contains(t, prompt, "re-read your output")
 	assert.NotContains(t, prompt, "defensive code")
+	assert.NotContains(t, prompt, "build and test commands")
+}
+
+func TestAssemblePrompt_WritingMode_HighEffort(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	prompt, err := AssemblePrompt(PromptOpts{
+		ProjectDir:   dir,
+		SprintPrompt: "Write chapter two.",
+		Promise:      "DONE",
+		EffortLevel:  epic.EffortHigh,
+		Mode:         "writing",
+	})
+	require.NoError(t, err)
+	assert.Contains(t, prompt, "QUALITY DIRECTIVE")
+	assert.Contains(t, prompt, "clarity and coherence")
+	assert.Contains(t, prompt, "re-read your output")
+	assert.NotContains(t, prompt, "build and test commands")
+}
+
+func TestAssemblePrompt_WritingMode_StandardEffort(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	prompt, err := AssemblePrompt(PromptOpts{
+		ProjectDir:   dir,
+		SprintPrompt: "Write the appendix.",
+		Promise:      "DONE",
+		EffortLevel:  epic.EffortStandard,
+		Mode:         "writing",
+	})
+	require.NoError(t, err)
+	assert.Contains(t, prompt, "QUALITY DIRECTIVE")
+	assert.Contains(t, prompt, "Check your work")
+	assert.Contains(t, prompt, "re-read your output")
+	assert.NotContains(t, prompt, "build and test commands")
 }
 
 func TestAssemblePrompt_WritingMode_PlanReference(t *testing.T) {

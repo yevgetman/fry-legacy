@@ -415,7 +415,7 @@ Final: build audit (if full epic completed; on failure, retries with one-shot fa
 | 1.25 | Media manifest | categorized list of `media/` files (optional) |
 | 1.5 | User directive | `--user-prompt`, `--gh-issue` (resolved), or `.fry/user-prompt.txt` (optional) |
 | 1.625 | Agent disposition | identity disposition loaded from `templates/identity/disposition.md` |
-| 1.75 | Quality directive | injected only at `max` effort |
+| 1.75 | Quality directive | tiered self-review + build/test verification at `standard`+ effort |
 | 2 | Strategic plan | reference to `plans/plan.md` |
 | 3 | Sprint instructions | `@prompt` block from epic |
 | 4 | Iteration memory | links to progress files |
@@ -693,6 +693,6 @@ Sprint prompts follow a 7-part convention: OPENER, REFERENCES, BUILD LIST, CONST
 - **Two-phase progress tracking:** per-sprint log (`sprint-progress.txt`) + cross-sprint compacted summaries (`epic-progress.txt`) for bounded context
 - **Promise tokens:** agent writes `===PROMISE: TOKEN===` to signal sprint completion → early exit
 - **No-op detection:** if git diff shows no changes for 2-3 consecutive iterations and sanity checks pass → early exit
-- **Two-level audit loop:** outer cycles discover issues, inner loops fix them FIFO; per-finding tracking across cycles with verify agents; CRITICAL/HIGH block, MODERATE is advisory, LOW included in fix at high/max effort (non-blocking); blocker categories (`environment_blocker`, `harness_blocker`, `external_dependency_blocker`) stay out of the normal fix loop and mark the sprint blocked instead of broken; complexity classification adapts budgets and reconciliation guidance; finding artifact fingerprints merge unchanged-code restatements back into active issues and require explicit `New Evidence` before unchanged reopenings are admitted; resolved-finding ledger with fuzzy theme matching suppresses probable reopenings; fix passes use a unified prompt carrying full audit context (codebase, diff, progress, resolved themes) alongside per-cluster fix instructions and inline target files, and are validated against Fry-owned diff contracts so empty, comment-only, and out-of-scope edits do not count as real remediation; same-role continuity is used for Claude/Codex audit and fix sessions only
+- **Two-level audit loop:** outer cycles discover new issues, inner loops fix+verify them FIFO (old issues cleared before new ones surfaced); per-finding tracking across cycles; CRITICAL/HIGH block, MODERATE advisory, LOW included at high/max effort (non-blocking); blocker categories (`environment_blocker`, `harness_blocker`, `external_dependency_blocker`) mark sprint blocked; complexity classification adapts budgets; resolved-finding ledger prevents re-raising; fix agent receives inline target files + fix history, verify agent receives fix diff + recommended fixes; progress-based exit at high/max effort (continue while resolving findings, exit after 2 stale cycles); same-role session continuity for Claude/Codex audit and fix sessions
 - **Graceful signal handling:** Ctrl+C saves partial work via git checkpoint
 - **Engine abstraction:** any CLI-based AI tool can be added by implementing `Engine` interface (2 methods: `Run`, `Name`)
