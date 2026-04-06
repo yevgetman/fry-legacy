@@ -151,6 +151,69 @@ func (h *FixHistory) RejectedFindingLabels(findings []Finding) []string {
 	return labels
 }
 
+// RejectionSummaryForFindings returns a human-readable summary of why fix
+// attempts were rejected for findings that have 2+ rejections. This helps
+// the fix agent change strategy instead of repeating the same approach.
+func (h *FixHistory) RejectionSummaryForFindings(findings []Finding) string {
+	if h == nil || len(h.attempts) == 0 {
+		return ""
+	}
+	relevantKeys := findingSet(findings)
+
+	// Count rejections per finding and collect reasons
+	type rejectionInfo struct {
+		label   string
+		count   int
+		reasons []string
+	}
+	rejections := make(map[string]*rejectionInfo)
+
+	for _, attempt := range h.attempts {
+		for _, outcome := range attempt.Outcomes {
+			if _, ok := relevantKeys[outcome.FindingKey]; !ok {
+				continue
+			}
+			if outcome.Status != "REJECTED" {
+				continue
+			}
+			info, exists := rejections[outcome.FindingKey]
+			if !exists {
+				info = &rejectionInfo{label: outcome.Label}
+				rejections[outcome.FindingKey] = info
+			}
+			info.count++
+			reason := strings.TrimSpace(outcome.Reason)
+			if reason != "" {
+				// Deduplicate reasons
+				found := false
+				for _, r := range info.reasons {
+					if r == reason {
+						found = true
+						break
+					}
+				}
+				if !found {
+					info.reasons = append(info.reasons, reason)
+				}
+			}
+		}
+	}
+
+	// Only report findings with 2+ rejections
+	var b strings.Builder
+	for _, info := range rejections {
+		if info.count < 2 {
+			continue
+		}
+		fmt.Fprintf(&b, "- **%s**: rejected %d times", info.label, info.count)
+		if len(info.reasons) > 0 {
+			fmt.Fprintf(&b, " — reasons: %s", strings.Join(info.reasons, "; "))
+		}
+		b.WriteString(". Try a fundamentally different approach.\n")
+	}
+	return b.String()
+}
+
 func attemptTargetsRelevantFinding(attempt FixAttempt, relevantKeys map[string]struct{}) bool {
 	for _, outcome := range attempt.Outcomes {
 		if _, ok := relevantKeys[outcome.FindingKey]; ok {

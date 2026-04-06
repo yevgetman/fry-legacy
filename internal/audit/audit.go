@@ -1481,6 +1481,20 @@ func buildUnifiedFixPrompt(opts AuditOpts, cluster remediationCluster, resolved 
 			b.WriteString("If a previous approach was close but flawed, fix the flaw instead of starting over.\n\n")
 			b.WriteString(rendered)
 			b.WriteString("\n")
+
+			// Escalate guidance when findings have repeated rejections
+			rejectionSummary := history.RejectionSummaryForFindings(cluster.Findings)
+			if rejectionSummary != "" {
+				b.WriteString("## Why Previous Fixes Were Rejected\n\n")
+				b.WriteString("Your previous fix attempts were rejected by Fry's fix contract. The finding\n")
+				b.WriteString("is real — the APPROACH was wrong. Common rejection reasons and how to adapt:\n\n")
+				b.WriteString("- **out_of_scope**: You changed files not listed in the fix contract. Only modify the declared target files.\n")
+				b.WriteString("- **comment_only**: You added comments instead of making behavioral changes. Make real code changes.\n")
+				b.WriteString("- **empty diff**: Your session produced no file changes. Ensure edits are saved to disk.\n\n")
+				b.WriteString("Specific rejection history for these findings:\n\n")
+				b.WriteString(rejectionSummary)
+				b.WriteString("\n")
+			}
 		}
 	}
 
