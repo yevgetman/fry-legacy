@@ -3,8 +3,6 @@ package audit
 import (
 	"fmt"
 	"strings"
-
-	"github.com/yevgetman/fry/internal/textutil"
 )
 
 func buildSessionCarryForwardSummary(reason string, findings []Finding, history *FixHistory) string {
@@ -25,9 +23,6 @@ func buildSessionCarryForwardSummary(reason string, findings []Finding, history 
 				label = finding.Description
 			}
 			fmt.Fprintf(&b, "- %s [%s]", label, finding.Severity)
-			if finding.ArtifactState != "" {
-				fmt.Fprintf(&b, " fingerprint=%s", textutil.TruncateUTF8(finding.ArtifactState, 16))
-			}
 			if finding.LastSeenCycle > 0 {
 				fmt.Fprintf(&b, " last_seen_cycle=%d", finding.LastSeenCycle)
 			}

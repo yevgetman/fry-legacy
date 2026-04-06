@@ -287,9 +287,6 @@ func renderDashboardAudit(w io.Writer, snap Snapshot, useColor bool) {
 	} else if counts := formatSeverityCounts(sp.Audit.Findings); counts != "" {
 		issues = counts
 	}
-	if sp.Audit.Reopenings > 0 {
-		issues += fmt.Sprintf("  [%d reopenings suppressed]", sp.Audit.Reopenings)
-	}
 	fmt.Fprintf(w, "Issues: %s\n", issues)
 
 	for _, headline := range sp.Audit.IssueHeadlines {

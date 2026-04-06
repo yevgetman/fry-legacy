@@ -436,136 +436,6 @@ func TestGroupByCycle(t *testing.T) {
 	assert.Len(t, groups[2].findings, 1)
 }
 
-func TestClusterFixFindingsGroupsBySharedScopeAndTheme(t *testing.T) {
-	t.Parallel()
-
-	findings := []Finding{
-		{
-			Location:       "internal/api/handler.go:12",
-			Description:    "Missing input validation on create endpoint",
-			Severity:       "HIGH",
-			RecommendedFix: "Validate required fields before writing to storage.",
-			OriginCycle:    1,
-		},
-		{
-			Location:       "internal/api/handler.go:44",
-			Description:    "Create endpoint still accepts malformed payloads without validation",
-			Severity:       "MODERATE",
-			RecommendedFix: "Reuse the same validation guard before decoding.",
-			OriginCycle:    1,
-		},
-		{
-			Location:       "internal/billing/worker.go:19",
-			Description:    "Billing retry loop ignores context cancellation",
-			Severity:       "HIGH",
-			RecommendedFix: "Stop retrying once the worker context is canceled.",
-			OriginCycle:    2,
-		},
-	}
-
-	clusters := clusterFixFindings(findings)
-	require.Len(t, clusters, 2)
-	assert.Len(t, clusters[0].Findings, 2)
-	assert.Equal(t, "internal/api/handler: validation endpoint", clusters[0].Label)
-	assert.Contains(t, clusters[0].Reason, "shared scope")
-	assert.Contains(t, clusters[0].Reason, "requirement theme")
-	assert.Equal(t, []string{"internal/api/handler.go"}, clusters[0].TargetFiles)
-	assert.Len(t, clusters[1].Findings, 1)
-}
-
-func TestOrderFindingsByClusterKeepsClusterMembersAdjacent(t *testing.T) {
-	t.Parallel()
-
-	findings := []Finding{
-		{
-			Location:       "internal/api/handler.go:12",
-			Description:    "Missing input validation on create endpoint",
-			Severity:       "HIGH",
-			RecommendedFix: "Validate required fields before writing to storage.",
-			OriginCycle:    1,
-		},
-		{
-			Location:       "internal/billing/worker.go:19",
-			Description:    "Billing retry loop ignores context cancellation",
-			Severity:       "HIGH",
-			RecommendedFix: "Stop retrying once the worker context is canceled.",
-			OriginCycle:    1,
-		},
-		{
-			Location:       "internal/api/handler.go:44",
-			Description:    "Create endpoint still accepts malformed payloads without validation",
-			Severity:       "MODERATE",
-			RecommendedFix: "Reuse the same validation guard before decoding.",
-			OriginCycle:    1,
-		},
-	}
-
-	ordered := orderFindingsByCluster(findings)
-	require.Len(t, ordered, 3)
-	assert.Equal(t, "internal/api/handler.go:12", ordered[0].Location)
-	assert.Equal(t, "internal/api/handler.go:44", ordered[1].Location)
-	assert.Equal(t, "internal/billing/worker.go:19", ordered[2].Location)
-}
-
-func TestClusterFixFindingsGroupsAcrossSharedSubsystem(t *testing.T) {
-	t.Parallel()
-
-	findings := []Finding{
-		{
-			Location:       "internal/api/create.go:12",
-			Description:    "Create flow skips tenant validation",
-			Severity:       "HIGH",
-			RecommendedFix: "Run tenant validation before writing the record.",
-			OriginCycle:    1,
-		},
-		{
-			Location:       "internal/api/update.go:21",
-			Description:    "Update flow also skips tenant validation",
-			Severity:       "HIGH",
-			RecommendedFix: "Reuse the tenant validation guard in the update path.",
-			OriginCycle:    1,
-		},
-	}
-
-	clusters := clusterFixFindings(findings)
-	require.Len(t, clusters, 1)
-	assert.Equal(t, "internal/api: validation tenant", clusters[0].Label)
-	assert.Equal(t, []string{"internal/api/create.go", "internal/api/update.go"}, clusters[0].TargetFiles)
-}
-
-func TestClusterFixFindingsDoesNotBridgeLooseThemes(t *testing.T) {
-	t.Parallel()
-
-	findings := []Finding{
-		{
-			Location:       "internal/api/auth.go:12",
-			Description:    "Token refresh misses expiry validation",
-			Severity:       "HIGH",
-			RecommendedFix: "Add expiry validation before token refresh.",
-			OriginCycle:    1,
-		},
-		{
-			Location:       "internal/api/cache.go:21",
-			Description:    "Refresh worker also skips expiry validation in cache path",
-			Severity:       "HIGH",
-			RecommendedFix: "Reuse expiry validation in the cache worker.",
-			OriginCycle:    1,
-		},
-		{
-			Location:       "internal/api/cache.go:48",
-			Description:    "Cache worker drops warm sessions during serialization",
-			Severity:       "MODERATE",
-			RecommendedFix: "Preserve warm sessions in the cache worker serializer.",
-			OriginCycle:    1,
-		},
-	}
-
-	clusters := clusterFixFindings(findings)
-	require.Len(t, clusters, 2)
-	assert.Len(t, clusters[0].Findings, 2)
-	assert.Len(t, clusters[1].Findings, 1)
-	assert.Equal(t, "Cache worker drops warm sessions during serialization", clusters[1].Findings[0].Description)
-}
 
 // --- filterUnresolved tests ---
 
@@ -659,54 +529,46 @@ func TestEffectiveOuterCycles(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name         string
-		epic         *epic.Epic
-		wantMax      int
-		wantProgress bool
+		name    string
+		epic    *epic.Epic
+		wantMax int
 	}{
 		{
-			name:         "standard effort default",
-			epic:         &epic.Epic{EffortLevel: epic.EffortStandard, MaxAuditIterations: 3},
-			wantMax:      3,
-			wantProgress: false,
+			name:    "standard effort default",
+			epic:    &epic.Epic{EffortLevel: epic.EffortStandard, MaxAuditIterations: 3},
+			wantMax: 3,
 		},
 		{
-			name:         "high effort not explicitly set",
-			epic:         &epic.Epic{EffortLevel: epic.EffortHigh, MaxAuditIterations: 3},
-			wantMax:      config.MaxOuterCyclesHighCap,
-			wantProgress: true,
+			name:    "high effort not explicitly set",
+			epic:    &epic.Epic{EffortLevel: epic.EffortHigh, MaxAuditIterations: 3},
+			wantMax: config.MaxOuterCyclesHighCap,
 		},
 		{
-			name:         "max effort not explicitly set",
-			epic:         &epic.Epic{EffortLevel: epic.EffortMax, MaxAuditIterations: 3},
-			wantMax:      config.MaxOuterCyclesMaxCap,
-			wantProgress: true,
+			name:    "max effort not explicitly set",
+			epic:    &epic.Epic{EffortLevel: epic.EffortMax, MaxAuditIterations: 3},
+			wantMax: config.MaxOuterCyclesMaxCap,
 		},
 		{
-			name:         "high effort explicitly set",
-			epic:         &epic.Epic{EffortLevel: epic.EffortHigh, MaxAuditIterations: 5, MaxAuditIterationsSet: true},
-			wantMax:      5,
-			wantProgress: false,
+			name:    "high effort explicitly set",
+			epic:    &epic.Epic{EffortLevel: epic.EffortHigh, MaxAuditIterations: 5, MaxAuditIterationsSet: true},
+			wantMax: 5,
 		},
 		{
-			name:         "fast effort",
-			epic:         &epic.Epic{EffortLevel: epic.EffortFast, MaxAuditIterations: 3},
-			wantMax:      3,
-			wantProgress: false,
+			name:    "fast effort",
+			epic:    &epic.Epic{EffortLevel: epic.EffortFast, MaxAuditIterations: 3},
+			wantMax: 3,
 		},
 		{
-			name:         "unset effort zero iterations",
-			epic:         &epic.Epic{},
-			wantMax:      config.DefaultMaxOuterAuditCycles,
-			wantProgress: false,
+			name:    "unset effort zero iterations",
+			epic:    &epic.Epic{},
+			wantMax: config.DefaultMaxOuterAuditCycles,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			maxCycles, progressBased := effectiveOuterCycles(tt.epic, "")
+			maxCycles := effectiveOuterCycles(tt.epic, "")
 			assert.Equal(t, tt.wantMax, maxCycles)
-			assert.Equal(t, tt.wantProgress, progressBased)
 		})
 	}
 }
@@ -866,7 +728,7 @@ func TestAuditPromptIncludesSessionRefreshSummary(t *testing.T) {
 	assert.Contains(t, prompt, "Missing error handling")
 }
 
-func TestUnifiedFixPromptFIFO(t *testing.T) {
+func TestFixPromptFIFO(t *testing.T) {
 	t.Parallel()
 
 	opts := makeOpts(t, &stubEngine{name: "codex"})
@@ -874,8 +736,7 @@ func TestUnifiedFixPromptFIFO(t *testing.T) {
 		{Description: "Old issue", Severity: "HIGH", OriginCycle: 1},
 		{Description: "New issue", Severity: "CRITICAL", OriginCycle: 2},
 	}
-	cluster := remediationCluster{ID: 1, Label: "test cluster", Findings: findings}
-	prompt := buildUnifiedFixPrompt(opts, cluster, nil, nil)
+	prompt := buildFixPrompt(opts, findings, nil, nil)
 
 	assert.Contains(t, prompt, "## Issues to Fix")
 	assert.Contains(t, prompt, "Old issue")
@@ -884,7 +745,7 @@ func TestUnifiedFixPromptFIFO(t *testing.T) {
 	assert.Contains(t, prompt, "- **Origin Cycle:** 2")
 }
 
-func TestUnifiedFixPromptListsClusterIssues(t *testing.T) {
+func TestFixPromptListsIssues(t *testing.T) {
 	t.Parallel()
 
 	opts := makeOpts(t, &stubEngine{name: "codex"})
@@ -904,15 +765,8 @@ func TestUnifiedFixPromptListsClusterIssues(t *testing.T) {
 			OriginCycle:    1,
 		},
 	}
-	cluster := remediationCluster{
-		ID:          1,
-		Label:       "internal/api: validation",
-		Findings:    findings,
-		TargetFiles: []string{"internal/api/handler.go"},
-	}
-	prompt := buildUnifiedFixPrompt(opts, cluster, nil, nil)
+	prompt := buildFixPrompt(opts, findings, nil, nil)
 
-	assert.Contains(t, prompt, "Cluster 1: internal/api: validation")
 	assert.Contains(t, prompt, "## Issues to Fix")
 	assert.Contains(t, prompt, "### Issue 1")
 	assert.Contains(t, prompt, "### Issue 2")
@@ -920,70 +774,50 @@ func TestUnifiedFixPromptListsClusterIssues(t *testing.T) {
 	assert.Contains(t, prompt, "malformed payloads")
 }
 
-func TestUnifiedFixPromptWritingMode(t *testing.T) {
+func TestFixPromptWritingMode(t *testing.T) {
 	t.Parallel()
 
 	opts := makeOpts(t, &stubEngine{name: "codex"})
 	opts.Mode = "writing"
-	cluster := remediationCluster{ID: 1, Label: "content", Findings: []Finding{{Description: "weak transition", Severity: "MODERATE", OriginCycle: 1}}}
-	prompt := buildUnifiedFixPrompt(opts, cluster, nil, nil)
+	findings := []Finding{{Description: "weak transition", Severity: "MODERATE", OriginCycle: 1}}
+	prompt := buildFixPrompt(opts, findings, nil, nil)
 	assert.Contains(t, prompt, "content issues")
 	assert.Contains(t, prompt, "minimal editorial changes")
 }
 
-func TestUnifiedFixPromptIncludesCodebaseContext(t *testing.T) {
+func TestFixPromptIncludesCodebaseContext(t *testing.T) {
 	t.Parallel()
 
 	opts := makeOpts(t, &stubEngine{name: "codex"})
 	writeFile(t, filepath.Join(opts.ProjectDir, config.CodebaseFile), "# Codebase: Fry\n\nFollow grouped imports and contextual errors.")
 
-	cluster := remediationCluster{ID: 1, Label: "errors", Findings: []Finding{{Description: "weak error context", Severity: "HIGH", OriginCycle: 1}}}
-	prompt := buildUnifiedFixPrompt(opts, cluster, nil, nil)
+	findings := []Finding{{Description: "weak error context", Severity: "HIGH", OriginCycle: 1}}
+	prompt := buildFixPrompt(opts, findings, nil, nil)
 
 	assert.Contains(t, prompt, "## Codebase Context")
 	assert.Contains(t, prompt, "Follow grouped imports and contextual errors.")
 	assert.Contains(t, prompt, "Preserve unrelated behavior")
 }
 
-func TestUnifiedFixPromptIncludesFixContract(t *testing.T) {
-	t.Parallel()
-
-	opts := makeOpts(t, &stubEngine{name: "codex"})
-	findings := []Finding{{
-		Location:       "internal/audit/audit.go:123",
-		Description:    "missing nil guard",
-		Severity:       "HIGH",
-		RecommendedFix: "Add the nil guard before dereference.",
-	}}
-	cluster := remediationCluster{ID: 1, Label: "audit: nil guard", Findings: findings, TargetFiles: []string{"internal/audit/audit.go"}}
-	prompt := buildUnifiedFixPrompt(opts, cluster, nil, nil)
-
-	assert.Contains(t, prompt, "## Fix Contract")
-	assert.Contains(t, prompt, "### Issue 1 Contract")
-	assert.Contains(t, prompt, "**Target Files:** internal/audit/audit.go")
-	assert.Contains(t, prompt, "already fixed")
-	assert.Contains(t, prompt, "### Issue 1")
-}
-
-func TestUnifiedFixPromptIncludesSessionRefreshSummary(t *testing.T) {
+func TestFixPromptIncludesSessionRefreshSummary(t *testing.T) {
 	t.Parallel()
 
 	opts := makeOpts(t, &stubEngine{name: "codex"})
 	opts.SessionCarryForward = "Session refreshed because token budget reached (16000 tokens).\nRecent failed fix attempts:\n- Attempt 1: no-op."
 
-	cluster := remediationCluster{ID: 1, Label: "guard", Findings: []Finding{{
+	findings := []Finding{{
 		Description: "missing nil guard",
 		Severity:    "HIGH",
 		OriginCycle: 1,
-	}}}
-	prompt := buildUnifiedFixPrompt(opts, cluster, nil, nil)
+	}}
+	prompt := buildFixPrompt(opts, findings, nil, nil)
 
 	assert.Contains(t, prompt, "## Session Refresh Summary")
 	assert.Contains(t, prompt, "token budget reached (16000 tokens)")
 	assert.Contains(t, prompt, "Recent failed fix attempts")
 }
 
-func TestUnifiedFixPromptIncludesDiffAndProgress(t *testing.T) {
+func TestFixPromptIncludesDiffAndProgress(t *testing.T) {
 	t.Parallel()
 
 	opts := makeOpts(t, &stubEngine{name: "codex"})
@@ -991,8 +825,8 @@ func TestUnifiedFixPromptIncludesDiffAndProgress(t *testing.T) {
 
 	writeFile(t, filepath.Join(opts.ProjectDir, config.SprintProgressFile), "Sprint 1 progress: implemented auth module")
 
-	cluster := remediationCluster{ID: 1, Label: "auth", Findings: []Finding{{Description: "missing auth check", Severity: "HIGH", OriginCycle: 1}}}
-	prompt := buildUnifiedFixPrompt(opts, cluster, nil, nil)
+	findings := []Finding{{Description: "missing auth check", Severity: "HIGH", OriginCycle: 1}}
+	prompt := buildFixPrompt(opts, findings, nil, nil)
 
 	assert.Contains(t, prompt, "## Changes Made This Sprint")
 	assert.Contains(t, prompt, "diff --git a/main.go b/main.go")
@@ -1000,7 +834,7 @@ func TestUnifiedFixPromptIncludesDiffAndProgress(t *testing.T) {
 	assert.Contains(t, prompt, "implemented auth module")
 }
 
-func TestUnifiedFixPromptIncludesResolvedThemes(t *testing.T) {
+func TestFixPromptIncludesResolvedThemes(t *testing.T) {
 	t.Parallel()
 
 	opts := makeOpts(t, &stubEngine{name: "codex"})
@@ -1008,8 +842,8 @@ func TestUnifiedFixPromptIncludesResolvedThemes(t *testing.T) {
 	resolved := newResolvedLedger()
 	resolved.add([]Finding{{Location: "src/api.go:10", Description: "SQL injection in query builder", Severity: "CRITICAL", OriginCycle: 1}})
 
-	cluster := remediationCluster{ID: 1, Label: "api", Findings: []Finding{{Description: "missing input validation", Severity: "HIGH", OriginCycle: 2}}}
-	prompt := buildUnifiedFixPrompt(opts, cluster, resolved, nil)
+	findings := []Finding{{Description: "missing input validation", Severity: "HIGH", OriginCycle: 2}}
+	prompt := buildFixPrompt(opts, findings, resolved, nil)
 
 	assert.Contains(t, prompt, "## Resolved Themes (Do Not Re-Break)")
 	assert.Contains(t, prompt, "SQL injection in query builder")
@@ -1601,35 +1435,6 @@ func TestRunAuditLoopNewIssuesInReAudit(t *testing.T) {
 
 // --- Progress-based loop tests ---
 
-func TestRunAuditLoopProgressStopsOnStale(t *testing.T) {
-	t.Parallel()
-
-	// High effort: same CRITICAL finding every time. Outer stale detection
-	// should stop after 3 consecutive stale cycles.
-	eng := &stubEngine{
-		name: "codex",
-		sideEffect: func(projectDir string, callIndex int) {
-			writeFile(t, filepath.Join(projectDir, config.SprintAuditFile), criticalFindings)
-		},
-	}
-	opts := makeOpts(t, eng)
-	opts.Epic.EffortLevel = epic.EffortHigh
-	opts.Epic.MaxAuditIterationsSet = false
-
-	result, err := RunAuditLoop(context.Background(), opts)
-	require.NoError(t, err)
-	assert.False(t, result.Passed)
-	assert.True(t, result.Blocking)
-	assert.Equal(t, "CRITICAL", result.MaxSeverity)
-
-	// Cycle 1: baseline (no stale check on cycle 1).
-	// Cycle 2: outer stale=1. Cycle 3: outer stale=2. Cycle 4: outer stale=3 → break before inner.
-	// Cycles 1-3 each: audit + (fix+verify)*2 (inner stale) = 5
-	// Cycle 4: audit only (breaks immediately after stale detection) = 1
-	// No final pass: 3*5 + 1 = 16
-	assert.Len(t, eng.prompts, 16)
-}
-
 func TestRunAuditLoopProgressContinues(t *testing.T) {
 	t.Parallel()
 
@@ -1662,186 +1467,6 @@ func TestRunAuditLoopProgressContinues(t *testing.T) {
 	// so progress is detected (different finding keys).
 	// 20 cycles * 5 calls = 100
 	assert.Len(t, eng.prompts, 100)
-}
-
-func TestRunAuditLoopProgressStopsOnTurnoverChurnAfterWarmup(t *testing.T) {
-	t.Parallel()
-
-	eng := &stubEngine{
-		name: "codex",
-		sideEffect: func(projectDir string, callIndex int) {
-			desc := fmt.Sprintf("Unique issue %d", callIndex)
-			writeFile(t, filepath.Join(projectDir, config.SprintAuditFile),
-				fmt.Sprintf("## Findings\n- **Location:** apps/web/src/components/booking/flow-%d.tsx:1\n- **Description:** %s\n- **Severity:** HIGH\n\n## Verdict\nFAIL\n", callIndex, desc))
-		},
-	}
-	opts := makeOpts(t, eng)
-	opts.Epic.EffortLevel = epic.EffortMax
-	opts.Epic.MaxAuditIterationsSet = false
-
-	result, err := RunAuditLoop(context.Background(), opts)
-	require.NoError(t, err)
-	assert.False(t, result.Passed)
-	assert.True(t, result.Blocking)
-
-	// Max effort adaptive churn detection now warms up earlier for large budgets.
-	// With maxOuter=100 the warmup caps at 10, so cycles 11, 12, 13 become churn
-	// 1, 2, 3 and the loop breaks before the inner loop on cycle 13.
-	// Cycles 1-12: audit + (fix+verify)*2 = 5 calls each => 60
-	// Cycle 13: audit only => 1
-	// No final pass: 60 + 1 = 61
-	assert.Len(t, eng.prompts, 61)
-}
-
-func TestRunAuditLoopProgressStopsOnLowYield(t *testing.T) {
-	t.Parallel()
-
-	const repeatedHighFindings = "## Findings\n- **Location:** src/first.go:10\n- **Description:** Missing booking consistency guard\n- **Severity:** HIGH\n- **Recommended Fix:** Add the missing guard and keep booking state transitions consistent.\n- **Location:** src/second.go:20\n- **Description:** Missing idempotency handling for duplicate submits\n- **Severity:** HIGH\n- **Recommended Fix:** Make duplicate submits idempotent.\n\n## Verdict\nFAIL\n"
-	var secondCycleFixPrompt string
-
-	// Call indices for EffortHigh (stopThreshold=3):
-	// Cycle 1: audit(0) fix(1) verify(2) fix(3) verify(4)
-	// Cycle 2: audit(5) fix(6) verify(7) fix(8) verify(9)
-	// Cycle 3: audit(10) fix(11) verify(12) fix(13) verify(14)
-	// No final pass — result determined from tracked findings.
-	eng := &stubEngine{
-		name: "codex",
-		sideEffect: func(projectDir string, callIndex int) {
-			auditPath := filepath.Join(projectDir, config.SprintAuditFile)
-			promptPath := filepath.Join(projectDir, config.AuditPromptFile)
-			switch callIndex {
-			case 0, 5, 10:
-				writeFile(t, auditPath, repeatedHighFindings)
-			case 1, 3, 6, 8, 11, 13:
-				if callIndex == 6 {
-					data, err := os.ReadFile(promptPath)
-					require.NoError(t, err)
-					secondCycleFixPrompt = string(data)
-				}
-				writeFile(t, filepath.Join(projectDir, "src/first.go"), fmt.Sprintf("package main\n\nconst attempt = %d\n", callIndex))
-			case 2, 4:
-				writeFile(t, auditPath,
-					"- **Issue:** 1\n- **Status:** STILL_PRESENT\n\n- **Issue:** 2\n- **Status:** STILL_PRESENT\n")
-			case 7, 9, 12, 14:
-				writeFile(t, auditPath,
-					"- **Issue:** 1\n- **Status:** STILL_PRESENT\n")
-			}
-		},
-	}
-	opts := makeOpts(t, eng)
-	opts.Epic.EffortLevel = epic.EffortHigh
-
-	result, err := RunAuditLoop(context.Background(), opts)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.NotNil(t, result.Metrics)
-
-	assert.False(t, result.Passed)
-	assert.True(t, result.Blocking)
-	assert.Equal(t, "HIGH", result.MaxSeverity)
-	assert.Contains(t, result.StopReason, "low_yield")
-	assert.Equal(t, result.StopReason, result.Metrics.LowYieldStopReason)
-	assert.Equal(t, 2, result.Metrics.LowYieldStrategyChanges)
-	assert.Equal(t, 3, result.Metrics.StrategyShiftCount())
-	assert.Contains(t, result.Metrics.LastStrategyShift(), strategyTriggerLowYield)
-	require.Len(t, result.Metrics.CycleSummaries, 3)
-	assert.InDelta(t, 0.0, result.Metrics.CycleSummaries[0].FixYield, 0.001)
-	assert.InDelta(t, 0.0, result.Metrics.CycleSummaries[1].VerifyYield, 0.001)
-	assert.InDelta(t, 0.0, result.Metrics.CycleSummaries[2].VerifyYield, 0.001)
-	assert.Len(t, eng.prompts, 15)
-	assert.Contains(t, secondCycleFixPrompt, "### Issue 1")
-	assert.NotContains(t, secondCycleFixPrompt, "### Issue 2")
-}
-
-func TestRunAuditLoopRecordsCachePressureStrategyShift(t *testing.T) {
-	t.Parallel()
-
-	// Both findings share the same file so they cluster together under per-cluster dispatch,
-	// preserving the 4-call sequence (audit, fix-cluster, verify, re-audit).
-	const findings = "## Findings\n- **Location:** tracked.txt:1\n- **Description:** Missing booking validation\n- **Severity:** HIGH\n- **Recommended Fix:** Validate the booking payload.\n- **Location:** tracked.txt:10\n- **Description:** Missing duplicate-submit protection\n- **Severity:** HIGH\n- **Recommended Fix:** Make submits idempotent.\n\n## Verdict\nFAIL\n"
-	eng := &stubEngine{
-		name: "claude",
-		outputs: []string{
-			`{"usage":{"input_tokens":2000,"cache_read_input_tokens":250000,"output_tokens":100}}`,
-			`{"usage":{"input_tokens":50,"output_tokens":25}}`,
-			`{"usage":{"input_tokens":40,"output_tokens":20}}`,
-			`{"usage":{"input_tokens":30,"output_tokens":15}}`,
-		},
-		sideEffect: func(projectDir string, callIndex int) {
-			switch callIndex {
-			case 0:
-				writeFile(t, filepath.Join(projectDir, config.SprintAuditFile), findings)
-			case 1:
-				writeFile(t, filepath.Join(projectDir, "tracked.txt"), "fixed\n")
-			case 2:
-				writeFile(t, filepath.Join(projectDir, config.SprintAuditFile), "- **Issue:** 1\n- **Status:** RESOLVED\n\n- **Issue:** 2\n- **Status:** RESOLVED\n")
-			case 3:
-				writeFile(t, filepath.Join(projectDir, config.SprintAuditFile), cleanAudit)
-			}
-		},
-	}
-
-	opts := makeOpts(t, eng)
-	initAuditGitRepo(t, opts.ProjectDir)
-	opts.Epic.EffortLevel = epic.EffortHigh
-
-	result, err := RunAuditLoop(context.Background(), opts)
-	require.NoError(t, err)
-	require.True(t, result.Passed)
-	require.NotNil(t, result.Metrics)
-	assert.GreaterOrEqual(t, result.Metrics.StrategyShiftCount(), 1)
-	assert.Contains(t, result.Metrics.LastStrategyShift(), strategyActionRefreshAuditSession)
-	require.Len(t, result.Metrics.CycleSummaries, 2)
-	assert.Equal(t, 250000, result.Metrics.CycleSummaries[0].CacheReadInput)
-	assert.Equal(t, 2235, result.Metrics.CycleSummaries[0].TokenTotal)
-}
-
-func TestIsTurnoverChurn(t *testing.T) {
-	t.Parallel()
-
-	prevHigh := []Finding{{
-		Location:    "apps/web/src/components/booking/a.tsx:10",
-		Description: "Old high issue",
-		Severity:    "HIGH",
-	}}
-	prevThreeModerate := []Finding{
-		{Location: "apps/web/src/components/booking/a.tsx:10", Description: "A", Severity: "MODERATE"},
-		{Location: "apps/web/src/components/booking/b.tsx:10", Description: "B", Severity: "MODERATE"},
-		{Location: "apps/web/src/components/booking/c.tsx:10", Description: "C", Severity: "MODERATE"},
-	}
-
-	t.Run("same severity and count with full turnover is churn", func(t *testing.T) {
-		current := []Finding{{
-			Location:    "apps/web/src/components/booking/d.tsx:10",
-			Description: "New high issue",
-			Severity:    "HIGH",
-		}}
-		assert.True(t, isTurnoverChurn(prevHigh, nil, current, current))
-	})
-
-	t.Run("improved severity is not churn", func(t *testing.T) {
-		current := []Finding{{
-			Location:    "apps/web/src/components/booking/d.tsx:10",
-			Description: "New moderate issue",
-			Severity:    "MODERATE",
-		}}
-		assert.False(t, isTurnoverChurn(prevHigh, nil, current, current))
-	})
-
-	t.Run("fewer actionable findings is not churn", func(t *testing.T) {
-		current := []Finding{{
-			Location:    "apps/web/src/components/booking/d.tsx:10",
-			Description: "Only one issue left",
-			Severity:    "MODERATE",
-		}}
-		assert.False(t, isTurnoverChurn(prevThreeModerate, nil, current, current))
-	})
-
-	t.Run("persisting actionable findings is not churn", func(t *testing.T) {
-		persisting := []Finding{prevHigh[0]}
-		current := append([]Finding(nil), persisting...)
-		assert.False(t, isTurnoverChurn(prevHigh, persisting, current, nil))
-	})
 }
 
 func TestRunAuditLoopExplicitCapAtHighEffort(t *testing.T) {
@@ -2401,86 +2026,6 @@ func TestResolvedLedger(t *testing.T) {
 	assert.False(t, ok)
 }
 
-func TestClassifyReopenings(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name           string
-		resolved       []Finding
-		newFindings    []Finding
-		wantReopen     int
-		wantNew        int
-		wantReopenKeys []string // ReopenOf values on reopenings
-	}{
-		{
-			"exact repeated finding is reopening",
-			[]Finding{{Location: "src/handler.go:10", Description: "SQL injection", Severity: "HIGH", OriginCycle: 1}},
-			[]Finding{{Location: "src/handler.go:50", Description: "SQL injection vulnerability in handler", Severity: "HIGH", OriginCycle: 2}},
-			1, 0,
-			[]string{"src/handler.go::sql injection"},
-		},
-		{
-			"same theme different wording is reopening",
-			[]Finding{{Description: "Stale slug canonicalization not implemented", Severity: "HIGH", OriginCycle: 1}},
-			[]Finding{{Description: "Missing slug canonicalization for stale entries", Severity: "MODERATE", OriginCycle: 3}},
-			1, 0, nil,
-		},
-		{
-			"same theme genuine regression admitted",
-			[]Finding{{Location: "src/api.go:10", Description: "Error handling incomplete", Severity: "MODERATE", OriginCycle: 1}},
-			[]Finding{{Location: "src/api.go:10", Description: "Error handling completely absent", Severity: "HIGH", OriginCycle: 2}},
-			0, 1, nil,
-		},
-		{
-			"same area genuinely new issue",
-			[]Finding{{Location: "src/handler.go:10", Description: "SQL injection", Severity: "HIGH", OriginCycle: 1}},
-			[]Finding{{Location: "src/handler.go:50", Description: "CSRF token missing on form endpoint", Severity: "HIGH", OriginCycle: 2}},
-			0, 1, nil,
-		},
-		{
-			"same theme lower severity after fix is reopening",
-			[]Finding{{Location: "src/handler.go:10", Description: "Null pointer crash in request handler", Severity: "HIGH", OriginCycle: 1}},
-			[]Finding{{Location: "src/handler.go:20", Description: "Possible null pointer crash in handler edge case", Severity: "MODERATE", OriginCycle: 2}},
-			1, 0, nil,
-		},
-		{
-			"different file families are genuinely new",
-			[]Finding{{Location: "src/auth.go:10", Description: "Missing input validation", Severity: "HIGH", OriginCycle: 1}},
-			[]Finding{{Location: "src/payment.go:20", Description: "Missing input validation", Severity: "HIGH", OriginCycle: 2}},
-			0, 1, nil,
-		},
-		{
-			"empty ledger returns all as new",
-			nil,
-			[]Finding{{Description: "Some new finding", Severity: "HIGH", OriginCycle: 1}},
-			0, 1, nil,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ledger := newResolvedLedger()
-			ledger.add(tt.resolved)
-			classification := classifyReopenings(tt.newFindings, ledger)
-			assert.Equal(t, tt.wantReopen, len(classification.Suppressed), "reopening count")
-			assert.Equal(t, tt.wantNew, len(classification.Admitted), "genuinely new count")
-			if tt.wantReopenKeys != nil {
-				for i, k := range tt.wantReopenKeys {
-					assert.Equal(t, k, classification.Suppressed[i].ReopenOf, "ReopenOf key")
-				}
-			}
-		})
-	}
-}
-
-func TestClassifyReopeningsNilLedger(t *testing.T) {
-	t.Parallel()
-
-	findings := []Finding{{Description: "Some finding", Severity: "HIGH"}}
-	classification := classifyReopenings(findings, nil)
-	assert.Empty(t, classification.Suppressed)
-	assert.Equal(t, findings, classification.Admitted)
-}
 
 func TestAuditPromptIncludesResolvedThemes(t *testing.T) {
 	t.Parallel()
@@ -2519,128 +2064,6 @@ func TestAuditPromptAntiReopenInstruction(t *testing.T) {
 	assert.Contains(t, prompt, "New Evidence")
 }
 
-func TestRunAuditLoopSuppressesReopenings(t *testing.T) {
-	t.Parallel()
-
-	// Cycle 1: finds HIGH issue "SQL injection in handler"
-	// Inner fix: resolves it
-	// Cycle 2 re-audit: same theme different wording -> should be suppressed, pass
-	findingsReport := "## Summary\nIssues found.\n\n## Findings\n- **Location:** src/handler.go:10\n- **Description:** SQL injection in request handler\n- **Severity:** HIGH\n- **Recommended Fix:** Use parameterized queries\n\n## Verdict\nFAIL\n"
-	reopenedReport := "## Summary\nIssues found.\n\n## Findings\n- **Location:** src/handler.go:50\n- **Description:** SQL injection vulnerability in handler endpoint\n- **Severity:** HIGH\n- **Recommended Fix:** Sanitize inputs\n\n## Verdict\nFAIL\n"
-
-	callCount := 0
-	eng := &stubEngine{
-		name: "codex",
-		sideEffect: func(projectDir string, idx int) {
-			callCount++
-			auditFile := filepath.Join(projectDir, config.SprintAuditFile)
-			switch idx {
-			case 0: // cycle 1 audit
-				writeFile(t, auditFile, findingsReport)
-			case 1: // cycle 1 fix — no file needed
-			case 2: // cycle 1 verify
-				writeFile(t, auditFile, "- **Issue:** 1\n- **Status:** RESOLVED\n")
-			case 3: // cycle 2 re-audit — same theme, different wording
-				writeFile(t, auditFile, reopenedReport)
-			default: // cycle 2 should detect reopening and suppress; then final pass
-				writeFile(t, auditFile, cleanAudit)
-			}
-		},
-	}
-
-	opts := makeOpts(t, eng)
-	opts.Epic.EffortLevel = epic.EffortHigh
-	opts.Epic.MaxAuditIterations = 5
-	opts.Epic.MaxAuditIterationsSet = true
-
-	result, err := RunAuditLoop(context.Background(), opts)
-	require.NoError(t, err)
-	assert.True(t, result.Passed, "should pass after reopening is suppressed")
-	assert.Equal(t, 1, result.SuppressedReopenings, "one reopening should be suppressed")
-}
-
-func TestRunAuditLoopAllowsUnchangedReopeningWithNewEvidence(t *testing.T) {
-	t.Parallel()
-
-	findingsReport := "## Summary\nIssues found.\n\n## Findings\n- **Location:** src/handler.go:10\n- **Description:** SQL injection in request handler\n- **Severity:** HIGH\n- **Recommended Fix:** Use parameterized queries\n\n## Verdict\nFAIL\n"
-	reopenedWithEvidence := "## Summary\nIssues found.\n\n## Findings\n- **Location:** src/handler.go:10\n- **Description:** SQL injection still present in request handler\n- **Severity:** HIGH\n- **Recommended Fix:** Remove string-built queries\n- **New Evidence:** The prior fix only covered the list endpoint; this unchanged handler path still concatenates SQL directly.\n\n## Verdict\nFAIL\n"
-
-	eng := &stubEngine{
-		name: "codex",
-		sideEffect: func(projectDir string, idx int) {
-			auditFile := filepath.Join(projectDir, config.SprintAuditFile)
-			switch idx {
-			case 0:
-				writeFile(t, auditFile, findingsReport)
-			case 1:
-			case 2:
-				writeFile(t, auditFile, "- **Issue:** 1\n- **Status:** RESOLVED\n")
-			case 3:
-				writeFile(t, auditFile, reopenedWithEvidence)
-			case 4:
-			case 5:
-				writeFile(t, auditFile, "- **Issue:** 1\n- **Status:** RESOLVED\n- **Notes:** uncovered endpoint now uses parameterized queries too\n")
-			default:
-				writeFile(t, auditFile, cleanAudit)
-			}
-		},
-	}
-
-	opts := makeOpts(t, eng)
-	opts.Epic.EffortLevel = epic.EffortHigh
-	opts.Epic.MaxAuditIterations = 5
-	opts.Epic.MaxAuditIterationsSet = true
-
-	result, err := RunAuditLoop(context.Background(), opts)
-	require.NoError(t, err)
-	require.True(t, result.Passed)
-	assert.Equal(t, 1, result.ReopenedWithEvidence)
-	require.NotNil(t, result.Metrics)
-	assert.Equal(t, 1, result.Metrics.Snapshot().ReopenedWithNewEvidence)
-}
-
-func TestRunAuditLoopAllowsGenuineRegression(t *testing.T) {
-	t.Parallel()
-
-	// Cycle 1: MODERATE issue
-	// Fix resolves it
-	// Cycle 2: same theme at HIGH severity -> should be admitted as genuine regression
-	moderateReport := "## Summary\nIssues found.\n\n## Findings\n- **Location:** src/api.go:10\n- **Description:** Error handling incomplete in API\n- **Severity:** MODERATE\n- **Recommended Fix:** Add error checks\n\n## Verdict\nFAIL\n"
-	highReport := "## Summary\nIssues found.\n\n## Findings\n- **Location:** src/api.go:10\n- **Description:** Error handling completely absent in API\n- **Severity:** HIGH\n- **Recommended Fix:** Implement full error handling\n\n## Verdict\nFAIL\n"
-
-	eng := &stubEngine{
-		name: "codex",
-		sideEffect: func(projectDir string, idx int) {
-			auditFile := filepath.Join(projectDir, config.SprintAuditFile)
-			apiPath := filepath.Join(projectDir, "src", "api.go")
-			switch idx {
-			case 0: // cycle 1 audit
-				require.NoError(t, os.MkdirAll(filepath.Dir(apiPath), 0o755))
-				writeFile(t, apiPath, "package src\n\nfunc call() error {\n\tif err := work(); err != nil {\n\t\treturn nil\n\t}\n\treturn nil\n}\n")
-				writeFile(t, auditFile, moderateReport)
-			case 1: // cycle 1 fix
-				writeFile(t, apiPath, "package src\n\nfunc call() error {\n\tif err := work(); err != nil {\n\t\treturn err\n\t}\n\treturn nil\n}\n")
-			case 2: // cycle 1 verify
-				writeFile(t, auditFile, "- **Issue:** 1\n- **Status:** RESOLVED\n")
-			case 3: // cycle 2 re-audit — same theme but escalated severity
-				writeFile(t, apiPath, "package src\n\nfunc call() error {\n\t_ = work()\n\treturn nil\n}\n")
-				writeFile(t, auditFile, highReport)
-			default:
-				writeFile(t, auditFile, cleanAudit)
-			}
-		},
-	}
-
-	opts := makeOpts(t, eng)
-	opts.Epic.EffortLevel = epic.EffortHigh
-	opts.Epic.MaxAuditIterations = 3
-	opts.Epic.MaxAuditIterationsSet = true
-
-	result, err := RunAuditLoop(context.Background(), opts)
-	require.NoError(t, err)
-	// The escalated finding should NOT be suppressed — audit should still have it
-	assert.Equal(t, 0, result.SuppressedReopenings, "escalated severity should not be suppressed")
-}
 
 func TestRunAuditLoopUsesSameRoleSessionContinuity(t *testing.T) {
 	t.Parallel()

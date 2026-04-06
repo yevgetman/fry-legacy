@@ -36,11 +36,9 @@ type Finding struct {
 	NewEvidence    string
 	AffectedFiles  []string
 
-	OriginCycle   int    // which outer audit cycle discovered this finding
-	LastSeenCycle int    // most recent outer audit cycle that observed this finding
-	ArtifactState string // lightweight fingerprint of the relevant artifact state
-	Resolved      bool   // whether this finding has been verified resolved
-	ReopenOf      string // if non-empty, exact key of the resolved finding this reopens
+	OriginCycle   int  // which outer audit cycle discovered this finding
+	LastSeenCycle int  // most recent outer audit cycle that observed this finding
+	Resolved      bool // whether this finding has been verified resolved
 }
 
 // key returns a normalized identity for deduplication and comparison across cycles.
@@ -95,36 +93,28 @@ type AuditProgress struct {
 	Findings     map[string]int
 	Blockers     map[string]int
 	Headlines    []string
-	Reopenings   int // count of findings suppressed as probable reopenings
 	Complexity   ComplexityTier
 	Metrics      AuditMetricsSnapshot
 }
 
 type AuditResult struct {
-	Passed               bool
-	Blocking             bool           // true when CRITICAL or HIGH issues remain after all cycles
-	Iterations           int            // number of outer audit cycles completed
-	MaxSeverity          string         // "CRITICAL", "HIGH", "MODERATE", "LOW", or ""
-	SeverityCounts       map[string]int // count of findings per severity level
-	UnresolvedFindings   []Finding      // remaining findings after all cycles
-	SuppressedReopenings int            // findings suppressed as probable reopenings across all cycles
-	RepeatedUnchanged    int            // findings repeated against unchanged artifact state
-	SuppressedUnchanged  int            // unchanged-code reopenings suppressed for lack of new evidence
-	ReopenedWithEvidence int            // unchanged-code reopenings admitted because they carried explicit new evidence
-	Blocked              bool           // true when unresolved blocker-class findings remain
-	BlockerCounts        map[string]int // blocker category -> count
-	Blockers             []Finding      // unresolved blocker details
-	Complexity           ComplexityTier
-	StopReason           string
-	Metrics              *AuditMetrics
+	Passed             bool
+	Blocking           bool           // true when CRITICAL or HIGH issues remain after all cycles
+	Iterations         int            // number of outer audit cycles completed
+	MaxSeverity        string         // "CRITICAL", "HIGH", "MODERATE", "LOW", or ""
+	SeverityCounts     map[string]int // count of findings per severity level
+	UnresolvedFindings []Finding      // remaining findings after all cycles
+	Blocked            bool           // true when unresolved blocker-class findings remain
+	BlockerCounts      map[string]int // blocker category -> count
+	Blockers           []Finding      // unresolved blocker details
+	Complexity         ComplexityTier
+	Metrics            *AuditMetrics
 }
 
 const (
-	maxStaleIterations      = 3 // outer loop stale threshold
-	maxTurnoverIterations   = 3 // outer loop finding-churn threshold after warmup
+	maxAuditExecutiveBytes = 2_000
+	maxAuditCodebaseBytes  = 8_000
 	maxInnerStaleIterations = 2 // inner loop stale threshold
-	maxAuditExecutiveBytes  = 2_000
-	maxAuditCodebaseBytes   = 8_000
 )
 
 // RunAuditLoop runs a two-level audit loop for a sprint.
@@ -147,11 +137,10 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 		_ = cleanupAuditSessions(opts.ProjectDir, opts.Sprint.Number)
 	}()
 
-	maxOuter, progressBased := effectiveOuterCycles(opts.Epic, opts.Complexity)
+	maxOuter := effectiveOuterCycles(opts.Epic, opts.Complexity)
 	maxInner := effectiveInnerIter(opts.Epic, opts.Complexity)
 	includeLow := fixIncludesLow(opts.Epic)
-	lowYieldStopThreshold := effectiveLowYieldStopCycles(opts.Epic)
-	auditMetrics := &AuditMetrics{ContentComplexity: opts.Complexity, FixStrategy: config.AuditFixStrategyDefault}
+	auditMetrics := &AuditMetrics{ContentComplexity: opts.Complexity}
 	fixHistory := &FixHistory{}
 	auditSession := newAuditSessionContinuity(opts.ProjectDir, opts.Sprint.Number, opts.Engine.Name())
 
@@ -165,21 +154,10 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 
 	var knownFindings []Finding // tracked across outer cycles
 	resolved := newResolvedLedger()
-	outerStaleCount := 0
-	outerTurnoverCount := 0
-	suppressedReopenings := 0
-	repeatedUnchanged := 0
-	suppressedUnchanged := 0
-	reopenedWithEvidence := 0
-	lowYieldStreak := 0
-	nextCycleFixBatchLimit := 0
-	lowYieldStopReason := ""
 	var lastCycle int
 
 	for cycle := 1; cycle <= maxOuter; cycle++ {
 		lastCycle = cycle
-		cycleFixBatchLimit := nextCycleFixBatchLimit
-		nextCycleFixBatchLimit = 0
 
 		select {
 		case <-ctx.Done():
@@ -231,26 +209,18 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 			}
 		}
 
-		// Build and write audit prompt (with known findings for verification on cycle 2+)
+		// STEP 1: Fresh audit scan
 		auditPrompt := buildAuditPrompt(auditPromptOpts, knownFindings, resolved, fixHistory)
 		if err := writePromptFile(promptPath, auditPrompt); err != nil {
 			return nil, fmt.Errorf("run audit loop: write audit prompt: %w", err)
 		}
 
 		auditModel := engine.ResolveModel(opts.Epic.AuditModel, opts.Engine.Name(), string(opts.Epic.EffortLevel), engine.SessionAudit)
-		if progressBased {
-			frylog.Log(
-				"▶ AUDIT  sprint %d/%d \"%s\"  cycle %d (progress-based, cap %d)  engine=%s  model=%s",
-				opts.Sprint.Number, opts.Epic.TotalSprints, opts.Sprint.Name,
-				cycle, maxOuter, opts.Engine.Name(), auditModel,
-			)
-		} else {
-			frylog.Log(
-				"▶ AUDIT  sprint %d/%d \"%s\"  cycle %d/%d  engine=%s  model=%s",
-				opts.Sprint.Number, opts.Epic.TotalSprints, opts.Sprint.Name,
-				cycle, maxOuter, opts.Engine.Name(), auditModel,
-			)
-		}
+		frylog.Log(
+			"▶ AUDIT  sprint %d/%d \"%s\"  cycle %d/%d  engine=%s  model=%s",
+			opts.Sprint.Number, opts.Epic.TotalSprints, opts.Sprint.Name,
+			cycle, maxOuter, opts.Engine.Name(), auditModel,
+		)
 
 		// Run audit agent
 		auditLogPath := filepath.Join(buildLogsDir,
@@ -302,7 +272,7 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 		if isAuditPass(maxSev) {
 			// LOW-only at max effort: attempt one fix pass before accepting.
 			if maxSev == "LOW" && opts.Epic.EffortLevel == epic.EffortMax {
-				lowFindings := decorateFindings(opts.ProjectDir, parseFindings(string(content)), cycle)
+				lowFindings := decorateFindings(parseFindings(string(content)), cycle)
 				if len(lowFindings) > 0 {
 					frylog.Log("  AUDIT: LOW-only at max effort — running single fix pass before accepting")
 					if err := runSingleLowFixPass(ctx, opts, lowFindings, cycle, buildLogsDir, auditMetrics); err != nil {
@@ -318,98 +288,43 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 			return &AuditResult{
 				Passed: true, Iterations: cycle,
 				MaxSeverity: maxSev, SeverityCounts: counts,
-				SuppressedReopenings: suppressedReopenings,
-				RepeatedUnchanged:    repeatedUnchanged,
-				SuppressedUnchanged:  suppressedUnchanged,
-				ReopenedWithEvidence: reopenedWithEvidence,
-				Complexity:           opts.Complexity,
-				Metrics:              auditMetrics,
+				Complexity: opts.Complexity,
+				Metrics:    auditMetrics,
 			}, nil
 		}
 
 		// Parse structured findings
-		currentFindings := decorateFindings(opts.ProjectDir, parseFindings(string(content)), cycle)
+		currentFindings := decorateFindings(parseFindings(string(content)), cycle)
 
 		// Fallback: severity indicates issues but no structured findings parsed
 		if len(currentFindings) == 0 {
-			currentFindings = decorateFindings(opts.ProjectDir, []Finding{{
+			currentFindings = decorateFindings([]Finding{{
 				Description: "Audit agent reported issues but structured findings could not be parsed. See raw audit output for details.",
 				Severity:    maxSev,
 				OriginCycle: cycle,
 			}}, cycle)
 		}
 
-		// Classify findings against known set
+		// Classify findings against known set (cycle 2+)
 		var activeFindings []Finding
-		var persisting []Finding
-		var newFindings []Finding
 		if cycle > 1 && len(knownFindings) > 0 {
 			classification := classifyFindings(knownFindings, currentFindings)
-			persisting = classification.Persisting
-			repeatedUnchanged += len(classification.RepeatedUnchanged)
-			auditMetrics.RepeatedUnchangedFindings += len(classification.RepeatedUnchanged)
 
-			// Record resolved findings in the ledger before classifying reopenings
+			// Record resolved findings in the ledger
 			resolved.add(classification.Resolved)
 
-			// Check if any "new" findings are reopenings of previously resolved themes
-			reopenings := classifyReopenings(classification.NewFindings, resolved)
-			newFindings = reopenings.Admitted
-			suppressedUnchanged += reopenings.SuppressedUnchanged
-			reopenedWithEvidence += reopenings.ReopenedWithNewEvidence
-			repeatedUnchanged += reopenings.SuppressedUnchanged
-			auditMetrics.SuppressedUnchangedFindings += reopenings.SuppressedUnchanged
-			auditMetrics.ReopenedWithNewEvidence += reopenings.ReopenedWithNewEvidence
-			auditMetrics.RepeatedUnchangedFindings += reopenings.SuppressedUnchanged
-
-			for i := range newFindings {
-				newFindings[i].OriginCycle = cycle
+			for i := range classification.NewFindings {
+				classification.NewFindings[i].OriginCycle = cycle
 			}
-			activeFindings = mergeFindings(persisting, newFindings)
+			activeFindings = mergeFindings(classification.Persisting, classification.NewFindings)
 			if len(classification.Resolved) > 0 {
 				frylog.Log("  AUDIT: %d previously known issues resolved", len(classification.Resolved))
 			}
-			if len(classification.RepeatedUnchanged) > 0 {
-				frylog.Log("  AUDIT: %d unchanged-code finding restatements merged into existing active issues", len(classification.RepeatedUnchanged))
-			}
-			if len(reopenings.Suppressed) > 0 {
-				suppressedReopenings += len(reopenings.Suppressed)
-				frylog.Log("  AUDIT: %d findings classified as probable reopenings (suppressed)", len(reopenings.Suppressed))
-			}
-			if reopenings.SuppressedUnchanged > 0 {
-				frylog.Log("  AUDIT: %d unchanged-code reopenings suppressed for lack of new evidence", reopenings.SuppressedUnchanged)
-			}
-			if reopenings.ReopenedWithNewEvidence > 0 {
-				frylog.Log("  AUDIT: %d unchanged-code reopenings admitted because they provided explicit new evidence", reopenings.ReopenedWithNewEvidence)
-			}
-			if len(newFindings) > 0 {
-				frylog.Log("  AUDIT: %d new issues discovered", len(newFindings))
+			if len(classification.NewFindings) > 0 {
+				frylog.Log("  AUDIT: %d new issues discovered", len(classification.NewFindings))
 			}
 		} else {
-			// On cycle 2+ with empty knownFindings (all previously resolved),
-			// still check for reopenings against the resolved ledger.
-			if cycle > 1 && resolved.len() > 0 {
-				reopenings := classifyReopenings(currentFindings, resolved)
-				if len(reopenings.Suppressed) > 0 {
-					suppressedReopenings += len(reopenings.Suppressed)
-					frylog.Log("  AUDIT: %d findings classified as probable reopenings (suppressed)", len(reopenings.Suppressed))
-				}
-				if reopenings.SuppressedUnchanged > 0 {
-					suppressedUnchanged += reopenings.SuppressedUnchanged
-					repeatedUnchanged += reopenings.SuppressedUnchanged
-					auditMetrics.SuppressedUnchangedFindings += reopenings.SuppressedUnchanged
-					auditMetrics.RepeatedUnchangedFindings += reopenings.SuppressedUnchanged
-					frylog.Log("  AUDIT: %d unchanged-code reopenings suppressed for lack of new evidence", reopenings.SuppressedUnchanged)
-				}
-				if reopenings.ReopenedWithNewEvidence > 0 {
-					reopenedWithEvidence += reopenings.ReopenedWithNewEvidence
-					auditMetrics.ReopenedWithNewEvidence += reopenings.ReopenedWithNewEvidence
-					frylog.Log("  AUDIT: %d unchanged-code reopenings admitted because they provided explicit new evidence", reopenings.ReopenedWithNewEvidence)
-				}
-				activeFindings = reopenings.Admitted
-			} else {
-				activeFindings = currentFindings
-			}
+			activeFindings = currentFindings
 		}
 
 		effectiveCounts := severityCountsForFindings(activeFindings)
@@ -439,66 +354,23 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 			return &AuditResult{
 				Passed: true, Iterations: cycle,
 				MaxSeverity: effectiveMaxSev, SeverityCounts: effectiveCounts,
-				SuppressedReopenings: suppressedReopenings,
-				RepeatedUnchanged:    repeatedUnchanged,
-				SuppressedUnchanged:  suppressedUnchanged,
-				ReopenedWithEvidence: reopenedWithEvidence,
-				BlockerCounts:        activeBlockerCounts,
-				Blockers:             activeBlockers,
-				Complexity:           opts.Complexity,
-				Metrics:              auditMetrics,
+				BlockerCounts: activeBlockerCounts,
+				Blockers:      activeBlockers,
+				Complexity:    opts.Complexity,
+				Metrics:       auditMetrics,
 			}, nil
 		}
 
 		fixableCount := countFixableProductFindings(activeFindings, includeLow)
-
-		// Outer stale detection (progress-based mode only)
-		if progressBased && cycle > 1 {
-			prevKeys := findingKeySet(knownFindings)
-			currKeys := findingKeySet(activeFindings)
-			if !hasProgress(prevKeys, currKeys) {
-				outerStaleCount++
-				frylog.Log("  AUDIT: no progress detected (%d/%d stale cycles)", outerStaleCount, maxStaleIterations)
-				if outerStaleCount >= maxStaleIterations {
-					auditMetrics.RecordCycleSummary(cycle)
-					frylog.Log("  AUDIT: stopping — no progress after %d cycles", cycle)
-					break
-				}
-			} else {
-				outerStaleCount = 0
-			}
-
-			if shouldDetectTurnoverChurn(opts.Epic, cycle, maxOuter) {
-				if isTurnoverChurn(knownFindings, persisting, activeFindings, newFindings) {
-					outerTurnoverCount++
-					frylog.Log("  AUDIT: full actionable turnover detected (%d/%d churn cycles)", outerTurnoverCount, maxTurnoverIterations)
-					if outerTurnoverCount >= maxTurnoverIterations {
-						auditMetrics.RecordCycleSummary(cycle)
-						frylog.Log("  AUDIT: stopping — audit findings are churning without convergence after %d cycles", cycle)
-						break
-					}
-				} else {
-					outerTurnoverCount = 0
-				}
-			}
-		}
-
 		frylog.Log("  AUDIT: %s — entering fix loop (%d issues)...", formatSeverityCounts(effectiveCounts), fixableCount)
 
-		// Sort findings FIFO for fix agent
+		// Freeze finding set for inner loop (FIFO discipline)
 		sortFindingsFIFO(activeFindings)
-		if cycleFixBatchLimit > 0 && countFixableProductFindings(activeFindings, includeLow) > cycleFixBatchLimit {
-			frylog.Log("  AUDIT: low-yield mode active — limiting cycle %d fix batches to %d issue(s)", cycle, cycleFixBatchLimit)
-		}
 
-		// Inner fix loop — per-cluster dispatch with fast-fail
+		// INNER LOOP: fix-then-verify
 		innerStaleCount := 0
 		lastResolvedCount := 0
 		fixSession := newFixSessionContinuity(opts.ProjectDir, opts.Sprint.Number, cycle, opts.Engine.Name())
-		// Per-cluster fast-fail: when a cluster fix is rejected, all its finding keys are added here
-		// and skipped in subsequent iterations. Keys persist for the entire cycle intentionally —
-		// the outer re-audit loop handles any findings that couldn't be fixed in this cycle.
-		skippedFindingKeys := make(map[string]bool)
 
 		for fixIter := 1; fixIter <= maxInner; fixIter++ {
 			select {
@@ -510,83 +382,26 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 				return nil, err
 			}
 
-			unresolved := orderFindingsByCluster(filterFixableProductFindings(activeFindings, includeLow))
+			unresolved := filterFixableProductFindings(activeFindings, includeLow)
 			if len(unresolved) == 0 {
 				break
 			}
+
+			// If verify keeps saying behavior is unchanged for a finding after
+			// multiple fix attempts, stop the inner loop and let the outer loop
+			// try a fresh audit scan.
 			behaviorSignals := fixHistory.BehaviorUnchangedSignals(unresolved)
-			fixPromptOpts := opts
-			if len(behaviorSignals) > 0 {
-				fixPromptOpts.BehaviorGuidance = buildBehaviorGuidance(unresolved, behaviorSignals)
-
-				var escalatedKeys []string
-				for _, signal := range behaviorSignals {
-					if signal.Count >= config.BehaviorUnchangedStopThreshold {
-						frylog.Log("  AUDIT FIX: behavior unchanged for %s across %d verify passes — moving to re-audit", signal.Label, signal.Count)
-						auditMetrics.BehaviorUnchangedEscalations++
-						auditMetrics.RecordStrategyShift(StrategyShift{
-							Cycle:     cycle,
-							Iteration: fixIter,
-							Trigger:   strategyTriggerBehaviorUnchanged,
-							Action:    strategyActionStopFixLoop,
-							Detail:    fmt.Sprintf("%s repeated %d times", signal.Label, signal.Count),
-						})
-						innerStaleCount = maxInnerStaleIterations
-						escalatedKeys = nil
-						break
-					}
-					if signal.Count >= config.BehaviorUnchangedEscalationThreshold {
-						escalatedKeys = append(escalatedKeys, signal.FindingKey)
-					}
-				}
-				if innerStaleCount >= maxInnerStaleIterations {
-					break
-				}
-				if len(escalatedKeys) > 0 {
-					unresolved = filterFindingsByKey(unresolved, escalatedKeys)
-					fixPromptOpts.BehaviorGuidance = buildBehaviorGuidance(unresolved, behaviorSignals)
-					auditMetrics.BehaviorUnchangedEscalations++
-					auditMetrics.RecordStrategyShift(StrategyShift{
-						Cycle:     cycle,
-						Iteration: fixIter,
-						Trigger:   strategyTriggerBehaviorUnchanged,
-						Action:    strategyActionRefreshFixSession,
-						Detail:    fmt.Sprintf("%d issue(s) narrowed after repeated unchanged behavior", len(unresolved)),
-					})
-					frylog.Log("  AUDIT FIX: %d issue(s) repeated behavior-unchanged — narrowing batch and refreshing fix session", len(unresolved))
-					if fixSession != nil {
-						fixSession.Clear()
-					}
-				}
-			}
-			if cycleFixBatchLimit > 0 && len(unresolved) > cycleFixBatchLimit {
-				unresolved = append([]Finding(nil), unresolved[:cycleFixBatchLimit]...)
-			}
-			targetClusters := clusterFixFindings(unresolved)
-
-			// Per-cluster dispatch: select the first cluster whose findings aren't all skipped
-			var targetCluster *remediationCluster
-			for i := range targetClusters {
-				allSkipped := true
-				for _, f := range targetClusters[i].Findings {
-					if !skippedFindingKeys[f.key()] {
-						allSkipped = false
-						break
-					}
-				}
-				if !allSkipped {
-					targetCluster = &targetClusters[i]
+			for _, signal := range behaviorSignals {
+				if signal.Count >= 3 {
+					frylog.Log("  AUDIT FIX: behavior unchanged for %s across %d verify passes — moving to re-audit", signal.Label, signal.Count)
+					innerStaleCount = maxInnerStaleIterations
 					break
 				}
 			}
-
-			// If all clusters skipped, no fix can make progress — break to re-audit
-			if targetCluster == nil {
-				frylog.Log("  AUDIT FIX: all %d cluster(s) skipped — moving to re-audit", len(targetClusters))
+			if innerStaleCount >= maxInnerStaleIterations {
 				break
 			}
-
-			clusterFindings := targetCluster.Findings
+			fixPromptOpts := opts
 
 			emitAuditProgress(opts.ProgressFn, AuditProgress{
 				Stage:        "fixing",
@@ -594,41 +409,36 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 				MaxCycles:    maxOuter,
 				Fix:          fixIter,
 				MaxFixes:     maxInner,
-				TargetIssues: len(clusterFindings),
+				TargetIssues: len(unresolved),
 				Findings:     severityCountsForFindings(unresolved),
 				Blockers:     activeBlockerCounts,
-				Headlines:    findingHeadlines(clusterFindings, 3),
+				Headlines:    findingHeadlines(unresolved, 3),
 				Complexity:   opts.Complexity,
 				Metrics:      auditMetrics.Snapshot(),
 			})
 
 			fixModel := engine.ResolveModel(opts.Epic.AuditModel, opts.Engine.Name(), string(opts.Epic.EffortLevel), engine.SessionAuditFix)
-			frylog.Log("  AUDIT FIX  cycle %d  fix %d/%d — targeting cluster %d (%s, %d issues)  engine=%s  model=%s",
-				cycle, fixIter, maxInner, targetCluster.ID, targetCluster.Label, len(clusterFindings), opts.Engine.Name(), fixModel)
+			frylog.Log("  AUDIT FIX  cycle %d  fix %d/%d — targeting %d issues  engine=%s  model=%s",
+				cycle, fixIter, maxInner, len(unresolved), opts.Engine.Name(), fixModel)
 
-			// Build and write per-cluster fix prompt
-			fixContract := newFixContract(clusterFindings)
+			// Build and write fix prompt
 			fixRefreshReason := ""
 			if fixSession != nil {
-				fixRefreshReason = fixSession.MaybeRefresh(len(clusterFindings))
+				fixRefreshReason = fixSession.MaybeRefresh(len(unresolved))
 				if fixRefreshReason != "" {
-					fixPromptOpts.SessionCarryForward = buildSessionCarryForwardSummary(fixRefreshReason, clusterFindings, fixHistory)
+					fixPromptOpts.SessionCarryForward = buildSessionCarryForwardSummary(fixRefreshReason, unresolved, fixHistory)
 					frylog.Log("  AUDIT FIX: refreshing same-role fix session before cycle %d iteration %d (%s)", cycle, fixIter, fixRefreshReason)
 				}
 			}
-			fixPrompt := buildUnifiedFixPrompt(fixPromptOpts, *targetCluster, resolved, fixHistory)
+			fixPrompt := buildFixPrompt(fixPromptOpts, unresolved, resolved, fixHistory)
 			if err := writePromptFile(promptPath, fixPrompt); err != nil {
 				return nil, fmt.Errorf("run audit loop: write fix prompt: %w", err)
 			}
 
-			// Snapshot ALL modified files before the fix agent runs. This
-			// includes sprint deliverables that haven't been committed yet.
-			// If the fix is rejected, we restore from this snapshot instead
-			// of HEAD — which may be a prior sprint's checkpoint that doesn't
-			// contain the current sprint's files.
+			// Snapshot modified files before the fix agent runs (safety net)
 			snapshotPaths, _ := git.ListModifiedFiles(ctx, opts.ProjectDir)
-			snapshotPaths = append(snapshotPaths, fixContract.TargetFiles()...)
 			preFixSnapshot := git.SnapshotFiles(opts.ProjectDir, snapshotPaths)
+			_ = preFixSnapshot // kept for future rollback use
 
 			// Run fix agent
 			fixLogPath := filepath.Join(buildLogsDir,
@@ -640,38 +450,17 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 			fixOutput, err := runAgentWithLog(ctx, opts, config.AuditFixInvocationPrompt, fixLogPath, fixModel, engine.SessionAuditFix, fixSession)
 			postFixFingerprint := git.WorktreeFingerprintForNoopDetection(ctx, opts.ProjectDir)
 			fixWasNoOp := preFixFingerprint == postFixFingerprint
-			diffSummary := summarizeNoopFingerprint(postFixFingerprint)
-			diffAssessment := FixDiffAssessment{
-				DiffSummary:        diffSummary,
-				DiffClassification: diffClassificationBehavioral,
-				ValidationResult:   fixValidationAccepted,
-			}
-			if fixWasNoOp {
-				diffAssessment = assessFixDiff(fixContract, "", postFixFingerprint, fixOutput)
-			} else if diffText, diffErr := git.GitDiffForAudit(ctx, opts.ProjectDir); diffErr != nil {
-				frylog.Log("WARNING: git diff for audit-fix contract validation failed: %v", diffErr)
-				diffAssessment.ChangedFiles = fixContract.TargetFiles()
-			} else {
-				diffAssessment = assessFixDiff(fixContract, diffText, postFixFingerprint, fixOutput)
-			}
 			fixTokens := tokenmetrics.ParseTokens(opts.Engine.Name(), fixOutput)
 			auditMetrics.Record(CallMetric{
 				SessionType:          engine.SessionAuditFix,
 				Cycle:                cycle,
 				Iteration:            fixIter,
-				ClusterID:            targetCluster.ID,
 				SessionRefreshReason: fixRefreshReason,
-				IssueIDs:             fixContract.IssueIDs(),
 				PromptBytes:          fixPromptBytes,
 				OutputBytes:          len(fixOutput),
 				DurationMs:           time.Since(fixStarted).Milliseconds(),
 				Model:                fixModel,
 				WasNoOp:              fixWasNoOp,
-				DeclaredTargetFiles:  fixContract.TargetFiles(),
-				ChangedFiles:         diffAssessment.ChangedFiles,
-				DiffClassification:   diffAssessment.DiffClassification,
-				ValidationResult:     diffAssessment.ValidationResult,
-				AlreadyFixedClaim:    diffAssessment.AlreadyFixedClaim,
 				Tokens:               fixTokens,
 			})
 			if fixSession != nil {
@@ -684,51 +473,13 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 				return nil, err
 			}
 
-			if diffAssessment.ValidationResult == fixValidationRejected {
-				switch diffAssessment.DiffClassification {
-				case diffClassificationCommentOnly:
-					frylog.Log("  AUDIT FIX: rejected comment-only diff for cluster %d (%s) — skipping cluster", targetCluster.ID, targetCluster.Label)
-				case diffClassificationOutOfScope:
-					frylog.Log("  AUDIT FIX: rejected out-of-scope diff for cluster %d (%s) — skipping cluster", targetCluster.ID, targetCluster.Label)
-				default:
-					frylog.Log("  AUDIT FIX: no-op for cluster %d (%s) — skipping cluster", targetCluster.ID, targetCluster.Label)
-				}
-				// Roll back rejected changes to their pre-fix state. Uses the
-				// snapshot for target files (preserves sprint deliverables) and
-				// falls back to HEAD restore for out-of-scope files.
-				if len(diffAssessment.ChangedFiles) > 0 {
-					unhandled, rbErr := git.RestoreFromSnapshot(opts.ProjectDir, preFixSnapshot, diffAssessment.ChangedFiles)
-					if rbErr != nil {
-						frylog.Log("WARNING: audit: snapshot rollback failed, falling back to HEAD restore: %v", rbErr)
-						_ = git.RestoreFiles(ctx, opts.ProjectDir, diffAssessment.ChangedFiles)
-					} else {
-						// Restore files not in snapshot via HEAD (out-of-scope files)
-						if len(unhandled) > 0 {
-							_ = git.RestoreFiles(ctx, opts.ProjectDir, unhandled)
-						}
-						frylog.Log("  AUDIT FIX: rolled back %d file(s) from rejected diff (%d snapshot, %d HEAD)",
-							len(diffAssessment.ChangedFiles), len(diffAssessment.ChangedFiles)-len(unhandled), len(unhandled))
-						auditMetrics.UpdateLastCallRollback(diffAssessment.ChangedFiles)
-					}
-					// Detect rolled-back migration files. File rollback cannot
-					// undo database state changes from commands like prisma migrate.
-					// Warn prominently so the user can reconcile manually.
-					for _, f := range diffAssessment.ChangedFiles {
-						if isMigrationFile(f) {
-							frylog.Log("WARNING: audit: rolled back migration file %s — database may have applied this migration; manual reconciliation may be needed", f)
-						}
-					}
-				}
-				// Fast-fail: skip all findings in this cluster for subsequent iterations
-				for _, f := range clusterFindings {
-					skippedFindingKeys[f.key()] = true
-				}
+			if fixWasNoOp {
+				frylog.Log("  AUDIT FIX: no-op — fix agent produced no changes")
 				fixHistory.Record(FixAttempt{
 					Cycle:       cycle,
 					Iteration:   fixIter,
-					Targeted:    targetedFindingLabels(clusterFindings),
-					DiffSummary: diffAssessment.DiffSummary,
-					Outcomes:    buildRejectedOutcomes(clusterFindings, diffAssessment),
+					Targeted:    targetedFindingLabels(unresolved),
+					DiffSummary: "no changes",
 				})
 				innerStaleCount++
 				if innerStaleCount >= maxInnerStaleIterations {
@@ -737,29 +488,8 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 				}
 				continue
 			}
-			// Selective rollback: if accepted but some files are outside the contract scope,
-			// roll back only the out-of-scope files and reclassify as accepted_partial.
-			if diffAssessment.ValidationResult == fixValidationAccepted && len(diffAssessment.OutOfScopeFiles) > 0 {
-				unhandledOOS, rbErr := git.RestoreFromSnapshot(opts.ProjectDir, preFixSnapshot, diffAssessment.OutOfScopeFiles)
-				if rbErr != nil {
-					frylog.Log("WARNING: audit: could not roll back %d out-of-scope file(s): %v — proceeding as accepted with out-of-scope files intact",
-						len(diffAssessment.OutOfScopeFiles), rbErr)
-					auditMetrics.UpdateLastCallRollback(diffAssessment.OutOfScopeFiles)
-				} else {
-					if len(unhandledOOS) > 0 {
-						_ = git.RestoreFiles(ctx, opts.ProjectDir, unhandledOOS)
-					}
-					frylog.Log("  AUDIT FIX: rolled back %d out-of-scope file(s), keeping in-scope changes for cluster %d (%s)",
-						len(diffAssessment.OutOfScopeFiles), targetCluster.ID, targetCluster.Label)
-					diffAssessment.ValidationResult = fixValidationAcceptedPartial
-					auditMetrics.UpdateLastCallPartial(diffAssessment.OutOfScopeFiles, fixValidationAcceptedPartial)
-				}
-			}
-			if diffAssessment.ValidationResult == fixValidationVerifyOnly {
-				frylog.Log("  AUDIT FIX: already-fixed claim with no behavioral diff — verifying claim")
-			}
 
-			// Run verify for ALL unresolved findings (not just cluster)
+			// Run verify for ALL unresolved findings
 			if verifyErr := runVerifyPass(ctx, opts, unresolved, activeFindings, cycle, fixIter, maxInner, maxOuter,
 				activeBlockerCounts, auditMetrics, fixHistory, buildLogsDir, auditFilePath, promptPath, includeLow); verifyErr != nil {
 				return nil, verifyErr
@@ -792,82 +522,6 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 		}
 		auditMetrics.RecordCycleSummary(cycle)
 
-		shouldStopForLowYield := false
-		if progressBased && fixableCount > lowYieldSingleIssueBatchLimit {
-			currentCycleSummary, ok := auditMetrics.LastCycleSummary()
-			if ok {
-				if currentCycleSummary.NoOpRate >= config.AuditLowYieldNoOpRateFloor && nextCycleFixBatchLimit == 0 {
-					nextCycleFixBatchLimit = lowYieldSingleIssueBatchLimit
-					auditMetrics.RecordStrategyShift(StrategyShift{
-						Cycle:   cycle,
-						Trigger: strategyTriggerNoOpRate,
-						Action:  strategyActionNarrowBatch,
-						Detail:  fmt.Sprintf("no-op rate %.0f%%", currentCycleSummary.NoOpRate*100),
-					})
-				}
-				if hasTokenBurnPressure(currentCycleSummary) {
-					if auditSession != nil {
-						auditSession.Clear()
-					}
-					auditMetrics.RecordStrategyShift(StrategyShift{
-						Cycle:   cycle,
-						Trigger: strategyTriggerTokenBurn,
-						Action:  strategyActionRefreshAuditSession,
-						Detail:  fmt.Sprintf("token_total=%d", currentCycleSummary.TokenTotal),
-					})
-				}
-				if hasCachePressure(currentCycleSummary) {
-					if auditSession != nil {
-						auditSession.Clear()
-					}
-					auditMetrics.RecordStrategyShift(StrategyShift{
-						Cycle:   cycle,
-						Trigger: strategyTriggerCachePressure,
-						Action:  strategyActionRefreshAuditSession,
-						Detail:  fmt.Sprintf("cache_read_input=%d token_total=%d", currentCycleSummary.CacheReadInput, currentCycleSummary.TokenTotal),
-					})
-				}
-			}
-			if ok && isLowYieldStrategyCycle(currentCycleSummary) {
-				lowYieldStreak++
-				frylog.Log(
-					"  AUDIT: low-yield cycle detected (cycle %d, fix yield %.2f, verify yield %.2f, no-op %.0f%%)",
-					cycle,
-					currentCycleSummary.FixYield,
-					currentCycleSummary.VerifyYield,
-					currentCycleSummary.NoOpRate*100,
-				)
-				trailingSummary, _ := auditMetrics.TrailingCycleSummary(config.AuditLowYieldTrailingCycles)
-				if shouldStopForLowYieldCycle(currentCycleSummary, trailingSummary, lowYieldStreak, lowYieldStopThreshold) {
-					lowYieldStopReason = formatLowYieldStopReason(currentCycleSummary, trailingSummary)
-					auditMetrics.LowYieldStopReason = lowYieldStopReason
-					auditMetrics.RecordStrategyShift(StrategyShift{
-						Cycle:   cycle,
-						Trigger: strategyTriggerLowYield,
-						Action:  strategyActionStopAudit,
-						Detail:  lowYieldStopReason,
-					})
-					frylog.Log("  AUDIT: stopping — %s", lowYieldStopReason)
-					shouldStopForLowYield = true
-				} else {
-					nextCycleFixBatchLimit = lowYieldSingleIssueBatchLimit
-					auditMetrics.RecordLowYieldStrategyChange(lowYieldStrategySingleIssueNextCycle)
-					auditMetrics.RecordStrategyShift(StrategyShift{
-						Cycle:   cycle,
-						Trigger: strategyTriggerLowYield,
-						Action:  lowYieldStrategySingleIssueNextCycle,
-						Detail:  fmt.Sprintf("fix_yield=%.2f verify_yield=%.2f", currentCycleSummary.FixYield, currentCycleSummary.VerifyYield),
-					})
-					if auditSession != nil {
-						auditSession.Clear()
-					}
-					frylog.Log("  AUDIT: next cycle will refresh audit context and run in single-issue low-yield mode")
-				}
-			} else {
-				lowYieldStreak = 0
-			}
-		}
-
 		// Record findings resolved in this cycle's inner fix loop
 		for _, f := range activeFindings {
 			if f.Resolved {
@@ -877,15 +531,10 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 		// Update known findings for next outer cycle
 		knownFindings = collectUnresolved(activeFindings)
 		fixHistory.PruneResolved(knownFindings)
-		if shouldStopForLowYield {
-			break
-		}
 	}
 
 	// Determine result from cycle-level tracked findings.
-	// No final re-audit pass — codebase-level evaluation is deferred to the
-	// build audit that runs after all sprints complete (RunBuildAudit).
-	unresolvedFindings := knownFindings // already filtered to unresolved by collectUnresolved at line 857
+	unresolvedFindings := knownFindings
 	unresolvedCounts := severityCountsForFindings(unresolvedFindings)
 	unresolvedMaxSev := maxSeverityForFindings(unresolvedFindings)
 	unresolvedBlockers := filterBlockers(unresolvedFindings)
@@ -905,34 +554,25 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 		return &AuditResult{
 			Passed: true, Iterations: lastCycle,
 			MaxSeverity: unresolvedMaxSev, SeverityCounts: unresolvedCounts,
-			SuppressedReopenings: suppressedReopenings,
-			RepeatedUnchanged:    repeatedUnchanged,
-			SuppressedUnchanged:  suppressedUnchanged,
-			ReopenedWithEvidence: reopenedWithEvidence,
-			BlockerCounts:        unresolvedBlockerCounts,
-			Blockers:             unresolvedBlockers,
-			Complexity:           opts.Complexity,
-			Metrics:              auditMetrics,
+			BlockerCounts: unresolvedBlockerCounts,
+			Blockers:      unresolvedBlockers,
+			Complexity:    opts.Complexity,
+			Metrics:       auditMetrics,
 		}, nil
 	}
 
 	return &AuditResult{
-		Passed:               false,
-		Blocking:             isBlockingSeverity(unresolvedMaxSev) || len(unresolvedBlockers) > 0,
-		Blocked:              len(unresolvedBlockers) > 0,
-		Iterations:           lastCycle,
-		MaxSeverity:          unresolvedMaxSev,
-		SeverityCounts:       unresolvedCounts,
-		UnresolvedFindings:   unresolvedFindings,
-		SuppressedReopenings: suppressedReopenings,
-		RepeatedUnchanged:    repeatedUnchanged,
-		SuppressedUnchanged:  suppressedUnchanged,
-		ReopenedWithEvidence: reopenedWithEvidence,
-		BlockerCounts:        unresolvedBlockerCounts,
-		Blockers:             unresolvedBlockers,
-		Complexity:           opts.Complexity,
-		StopReason:           lowYieldStopReason,
-		Metrics:              auditMetrics,
+		Passed:             false,
+		Blocking:           isBlockingSeverity(unresolvedMaxSev) || len(unresolvedBlockers) > 0,
+		Blocked:            len(unresolvedBlockers) > 0,
+		Iterations:         lastCycle,
+		MaxSeverity:        unresolvedMaxSev,
+		SeverityCounts:     unresolvedCounts,
+		UnresolvedFindings: unresolvedFindings,
+		BlockerCounts:      unresolvedBlockerCounts,
+		Blockers:           unresolvedBlockers,
+		Complexity:         opts.Complexity,
+		Metrics:            auditMetrics,
 	}, nil
 }
 
@@ -953,14 +593,7 @@ func runSingleLowFixPass(ctx context.Context, opts AuditOpts, findings []Finding
 		cycle, len(findings), opts.Engine.Name(), fixModel)
 
 	promptPath := filepath.Join(opts.ProjectDir, config.AuditPromptFile)
-	fixContract := newFixContract(findings)
-	lowCluster := remediationCluster{
-		ID:          1,
-		Label:       "LOW findings",
-		Findings:    findings,
-		TargetFiles: clusterTargetFiles(findings),
-	}
-	fixPrompt := buildUnifiedFixPrompt(opts, lowCluster, nil, nil)
+	fixPrompt := buildFixPrompt(opts, findings, nil, nil)
 	if err := writePromptFile(promptPath, fixPrompt); err != nil {
 		return fmt.Errorf("run single low fix pass: write fix prompt: %w", err)
 	}
@@ -974,32 +607,16 @@ func runSingleLowFixPass(ctx context.Context, opts AuditOpts, findings []Finding
 	fixOutput, err := runAgentWithLog(ctx, opts, config.AuditFixInvocationPrompt, fixLogPath, fixModel, engine.SessionAuditFix, nil)
 	postFixFingerprint := git.WorktreeFingerprintForNoopDetection(ctx, opts.ProjectDir)
 	fixWasNoOp := preFixFingerprint == postFixFingerprint
-	diffAssessment := FixDiffAssessment{
-		DiffSummary:        summarizeNoopFingerprint(postFixFingerprint),
-		DiffClassification: diffClassificationBehavioral,
-		ValidationResult:   fixValidationAccepted,
-	}
-	if fixWasNoOp {
-		diffAssessment = assessFixDiff(fixContract, "", postFixFingerprint, fixOutput)
-	} else if diffText, diffErr := git.GitDiffForAudit(ctx, opts.ProjectDir); diffErr == nil {
-		diffAssessment = assessFixDiff(fixContract, diffText, postFixFingerprint, fixOutput)
-	}
 	if auditMetrics != nil {
 		auditMetrics.Record(CallMetric{
-			SessionType:         engine.SessionAuditFix,
-			Cycle:               cycle,
-			IssueIDs:            fixContract.IssueIDs(),
-			PromptBytes:         fixPromptBytes,
-			OutputBytes:         len(fixOutput),
-			DurationMs:          time.Since(fixStarted).Milliseconds(),
-			Model:               fixModel,
-			WasNoOp:             fixWasNoOp,
-			DeclaredTargetFiles: fixContract.TargetFiles(),
-			ChangedFiles:        diffAssessment.ChangedFiles,
-			DiffClassification:  diffAssessment.DiffClassification,
-			ValidationResult:    diffAssessment.ValidationResult,
-			AlreadyFixedClaim:   diffAssessment.AlreadyFixedClaim,
-			Tokens:              tokenmetrics.ParseTokens(opts.Engine.Name(), fixOutput),
+			SessionType: engine.SessionAuditFix,
+			Cycle:       cycle,
+			PromptBytes: fixPromptBytes,
+			OutputBytes: len(fixOutput),
+			DurationMs:  time.Since(fixStarted).Milliseconds(),
+			Model:       fixModel,
+			WasNoOp:     fixWasNoOp,
+			Tokens:      tokenmetrics.ParseTokens(opts.Engine.Name(), fixOutput),
 		})
 	}
 	return err
@@ -1162,20 +779,12 @@ func buildAuditPrompt(opts AuditOpts, previousFindings []Finding, resolvedThemes
 		b.WriteString("\n")
 	}
 
-	// Anti-capitulation guardrail: when findings have had all fix attempts
-	// rejected, the audit agent tends to declare them "spec-intentional" and
-	// clear them. This instruction prevents that pattern.
-	if rejectedLabels := fixHist.RejectedFindingLabels(actionablePrev); len(rejectedLabels) > 0 {
-		b.WriteString("## Important: Do Not Clear Findings Because Fixes Were Rejected\n\n")
-		b.WriteString("The following findings were raised in prior cycles but ALL fix attempts\n")
-		b.WriteString("were rejected by the fix contract (e.g. out-of-scope files, migration\n")
-		b.WriteString("conflicts). This means the **fix approach** was wrong, NOT the finding\n")
-		b.WriteString("itself. If the issue is still present in the code, you MUST report it\n")
-		b.WriteString("again regardless of fix history:\n\n")
-		for _, label := range rejectedLabels {
-			fmt.Fprintf(&b, "- %s\n", label)
-		}
-		b.WriteString("\n")
+	// Anti-capitulation guardrail
+	if len(actionablePrev) > 0 {
+		b.WriteString("## Important: Do Not Clear Findings Prematurely\n\n")
+		b.WriteString("If an issue is still present in the code, you must report it regardless\n")
+		b.WriteString("of what the fix agent claimed. Do not clear findings just because a fix\n")
+		b.WriteString("was attempted — verify the actual code state.\n\n")
 	}
 
 	// Resolved themes (cycle 2+ with resolved findings)
@@ -1212,9 +821,7 @@ func buildAuditPrompt(opts AuditOpts, previousFindings []Finding, resolvedThemes
 	b.WriteString("Prefer issues directly connected to the sprint goals, changed files, or regressions caused by this sprint.\n")
 	b.WriteString("Only raise pre-existing issues when this sprint introduced, worsened, or clearly exposed them.\n")
 	b.WriteString("If a previously resolved issue seems to recur under different wording, verify that it is genuinely\n")
-	b.WriteString("a distinct problem or a regression before reporting it. Repeat findings under varied wording are unhelpful.\n")
-	b.WriteString("Fry fingerprints relevant file state across audit cycles. If you raise the same issue family against\n")
-	b.WriteString("unchanged code, you must include **New Evidence** describing the new proof or contract interpretation.\n\n")
+	b.WriteString("a distinct problem or a regression before reporting it. Repeat findings under varied wording are unhelpful.\n\n")
 	b.WriteString("Classify each finding as `product_defect`, `environment_blocker`, `harness_blocker`, or `external_dependency_blocker`.\n")
 	b.WriteString("Use blocker categories when tests or runtime behavior fail because secrets, services, Docker/test harness setup,\n")
 	b.WriteString("or external dependencies are unavailable. Do not classify those as product defects.\n\n")
@@ -1290,16 +897,14 @@ func buildAuditPrompt(opts AuditOpts, previousFindings []Finding, resolvedThemes
 	return b.String()
 }
 
-// buildUnifiedFixPrompt builds a fix prompt for a single remediation cluster
-// that carries full audit context (codebase, diff, progress, resolved themes)
-// alongside per-cluster fix instructions and inline target files. This gives
-// the fix agent the same understanding the audit agent had when it discovered
-// the issues, eliminating context transfer loss.
-func buildUnifiedFixPrompt(opts AuditOpts, cluster remediationCluster, resolved *resolvedLedger, history *FixHistory) string {
+// buildFixPrompt builds a fix prompt for a set of findings that carries full
+// audit context (codebase, diff, progress, resolved themes) alongside fix
+// instructions and inline target files. This gives the fix agent the same
+// understanding the audit agent had when it discovered the issues.
+func buildFixPrompt(opts AuditOpts, findings []Finding, resolved *resolvedLedger, history *FixHistory) string {
 	var b strings.Builder
-	contract := newFixContract(cluster.Findings)
 
-	fmt.Fprintf(&b, "# AUDIT FIX — Sprint %d: %s (Cluster %d: %s)\n\n", opts.Sprint.Number, opts.Sprint.Name, cluster.ID, cluster.Label)
+	fmt.Fprintf(&b, "# AUDIT FIX — Sprint %d: %s\n\n", opts.Sprint.Number, opts.Sprint.Name)
 	if carry := strings.TrimSpace(opts.SessionCarryForward); carry != "" {
 		b.WriteString("## Session Refresh Summary\n\n")
 		b.WriteString(carry)
@@ -1311,7 +916,7 @@ func buildUnifiedFixPrompt(opts AuditOpts, cluster remediationCluster, resolved 
 		b.WriteString("\n\n")
 	}
 
-	// Role statement — the fix agent has full audit context
+	// Role statement
 	skipLow := !fixIncludesLow(opts.Epic)
 	if opts.Mode == "writing" {
 		b.WriteString("You are the auditor that identified these content issues. You have full codebase context.\n")
@@ -1331,22 +936,6 @@ func buildUnifiedFixPrompt(opts AuditOpts, cluster remediationCluster, resolved 
 
 	b.WriteString("**Important:** Focus exclusively on fixing the listed issues. Do not search\n")
 	b.WriteString("for new issues. Preserve unrelated behavior, follow existing patterns, and avoid broad refactors.\n\n")
-
-	// Fix contract
-	b.WriteString("## Fix Contract\n")
-	b.WriteString("Fry will validate your diff against this contract before the fix counts as a real remediation pass.\n")
-	b.WriteString("Empty diffs, comment-only diffs, and changes outside the declared target files are rejected.\n")
-	b.WriteString("If you believe an issue is already fixed, explain that in your final response instead of adding placeholder edits; Fry will verify that claim separately.\n\n")
-
-	for _, issue := range contract.Issues {
-		fmt.Fprintf(&b, "### Issue %d Contract\n", issue.ID)
-		if len(issue.TargetFiles) > 0 {
-			fmt.Fprintf(&b, "- **Target Files:** %s\n", strings.Join(issue.TargetFiles, ", "))
-		} else {
-			b.WriteString("- **Target Files:** (not declared; keep scope minimal and directly tied to the issue)\n")
-		}
-		fmt.Fprintf(&b, "- **Expected Evidence:** %s\n\n", issue.ExpectedEvidence)
-	}
 
 	// Full audit context — codebase, executive, progress, diff, resolved themes
 	appendCodebaseContext(&b, opts.ProjectDir)
@@ -1414,8 +1003,8 @@ func buildUnifiedFixPrompt(opts AuditOpts, cluster remediationCluster, resolved 
 
 	// Inline target file content for byte-level precision
 	inlinedFiles := make(map[string]struct{})
-	for _, issue := range contract.Issues {
-		for _, target := range issue.TargetFiles {
+	for _, finding := range findings {
+		for _, target := range finding.AffectedFiles {
 			if _, seen := inlinedFiles[target]; seen {
 				continue
 			}
@@ -1427,8 +1016,7 @@ func buildUnifiedFixPrompt(opts AuditOpts, cluster remediationCluster, resolved 
 				frylog.Log("WARNING: skipping out-of-project target file %s", target)
 				continue
 			}
-			// Skip directories — the audit agent sometimes lists directories
-			// (e.g. .git/) as target files, which cannot be inlined.
+			// Skip directories
 			if info, statErr := os.Stat(fullPath); statErr == nil && info.IsDir() {
 				continue
 			}
@@ -1438,8 +1026,8 @@ func buildUnifiedFixPrompt(opts AuditOpts, cluster remediationCluster, resolved 
 				continue
 			}
 			content := string(data)
-			if len(content) > config.MaxClusterFixFileBytes {
-				content = textutil.TruncateUTF8(content, config.MaxClusterFixFileBytes) + "\n...(truncated)"
+			if len(content) > config.MaxFixFileInlineBytes {
+				content = textutil.TruncateUTF8(content, config.MaxFixFileInlineBytes) + "\n...(truncated)"
 			}
 			fmt.Fprintf(&b, "## Target File: %s\n\n```\n%s\n```\n\n", target, content)
 		}
@@ -1447,19 +1035,8 @@ func buildUnifiedFixPrompt(opts AuditOpts, cluster remediationCluster, resolved 
 
 	// Issues to fix
 	b.WriteString("## Issues to Fix\n\n")
-	for _, f := range cluster.Findings {
-		issueID := 0
-		for _, issue := range contract.Issues {
-			if issue.FindingKey == f.key() {
-				issueID = issue.ID
-				break
-			}
-		}
-		if issueID > 0 {
-			fmt.Fprintf(&b, "### Issue %d\n", issueID)
-		} else {
-			b.WriteString("### Issue\n")
-		}
+	for i, f := range findings {
+		fmt.Fprintf(&b, "### Issue %d\n", i+1)
 		if f.OriginCycle > 0 {
 			fmt.Fprintf(&b, "- **Origin Cycle:** %d\n", f.OriginCycle)
 		}
@@ -1475,78 +1052,20 @@ func buildUnifiedFixPrompt(opts AuditOpts, cluster remediationCluster, resolved 
 	}
 
 	if history != nil {
-		if rendered := history.ForPrompt(cluster.Findings, 30_000); rendered != "" {
+		if rendered := history.ForPrompt(findings, 30_000); rendered != "" {
 			b.WriteString("## Previous Fix Attempts\n\n")
 			b.WriteString("The following approaches have already been tried. Do NOT repeat them.\n")
 			b.WriteString("If a previous approach was close but flawed, fix the flaw instead of starting over.\n\n")
 			b.WriteString(rendered)
 			b.WriteString("\n")
-
-			// Escalate guidance when findings have repeated rejections
-			rejectionSummary := history.RejectionSummaryForFindings(cluster.Findings)
-			if rejectionSummary != "" {
-				b.WriteString("## Why Previous Fixes Were Rejected\n\n")
-				b.WriteString("Your previous fix attempts were rejected by Fry's fix contract. The finding\n")
-				b.WriteString("is real — the APPROACH was wrong. Common rejection reasons and how to adapt:\n\n")
-				b.WriteString("- **out_of_scope**: You changed files not listed in the fix contract. Only modify the declared target files.\n")
-				b.WriteString("- **comment_only**: You added comments instead of making behavioral changes. Make real code changes.\n")
-				b.WriteString("- **empty diff**: Your session produced no file changes. Ensure edits are saved to disk.\n\n")
-				b.WriteString("Specific rejection history for these findings:\n\n")
-				b.WriteString(rejectionSummary)
-				b.WriteString("\n")
-			}
 		}
 	}
 
+	b.WriteString("After making changes, declare which findings you believe are resolved and why.\n")
 	b.WriteString("Run the smallest relevant validation you can before logging what you fixed.\n")
 	fmt.Fprintf(&b, "Append a brief note to %s about what you fixed.\n", config.SprintProgressFile)
 
 	return b.String()
-}
-
-func buildBehaviorGuidance(findings []Finding, signals []BehaviorUnchangedSignal) string {
-	if len(findings) == 0 || len(signals) == 0 {
-		return ""
-	}
-
-	contract := newFixContract(findings)
-	signalByKey := make(map[string]BehaviorUnchangedSignal, len(signals))
-	for _, signal := range signals {
-		signalByKey[signal.FindingKey] = signal
-	}
-
-	var b strings.Builder
-	b.WriteString("Verify has already shown that earlier remediations left the relevant behavior unchanged.\n")
-	b.WriteString("Do not answer with comments, TODOs, rationale-only edits, logging-only changes, or notes about what should happen.\n")
-	b.WriteString("Change the executable code path or data flow that still exhibits the issue.\n\n")
-
-	for _, finding := range findings {
-		signal, ok := signalByKey[finding.key()]
-		if !ok {
-			continue
-		}
-		issueID := 0
-		for _, issue := range contract.Issues {
-			if issue.FindingKey == finding.key() {
-				issueID = issue.ID
-				break
-			}
-		}
-		if issueID > 0 {
-			fmt.Fprintf(&b, "### Issue %d\n", issueID)
-		} else {
-			b.WriteString("### Issue\n")
-		}
-		fmt.Fprintf(&b, "- **Verify Outcome:** BEHAVIOR_UNCHANGED (%d prior verify passes)\n", signal.Count)
-		if strings.TrimSpace(signal.LatestNote) != "" {
-			fmt.Fprintf(&b, "- **Unchanged Behavior:** %s\n", strings.TrimSpace(signal.LatestNote))
-		} else {
-			b.WriteString("- **Unchanged Behavior:** the previously attempted remediation did not change the relevant runtime logic path\n")
-		}
-		b.WriteString("- **Required Response:** make a concrete code-path change that resolves the issue; explanation-only edits do not count\n\n")
-	}
-
-	return strings.TrimSpace(b.String())
 }
 
 func buildVerifyPrompt(opts AuditOpts, findings []Finding) string {
@@ -1796,54 +1315,6 @@ func findingKeySet(findings []Finding) map[string]struct{} {
 		}
 	}
 	return keys
-}
-
-func shouldDetectTurnoverChurn(ep *epic.Epic, cycle, maxOuter int) bool {
-	if ep == nil {
-		return false
-	}
-	if ep.MaxAuditIterationsSet {
-		return false
-	}
-	if ep.EffortLevel != epic.EffortMax {
-		return false
-	}
-	if maxOuter <= 8 {
-		return false
-	}
-	warmup := maxOuter / 4
-	if warmup < 6 {
-		warmup = 6
-	}
-	if warmup > 10 {
-		warmup = 10
-	}
-	return cycle > warmup
-}
-
-func isTurnoverChurn(previous, persisting, current, newFindings []Finding) bool {
-	if countActionableFindings(persisting) > 0 {
-		return false
-	}
-
-	previousActionable := countActionableFindings(previous)
-	currentActionable := countActionableFindings(current)
-	newActionable := countActionableFindings(newFindings)
-	if previousActionable == 0 || currentActionable == 0 || newActionable == 0 {
-		return false
-	}
-
-	// A fully replaced actionable set can still represent genuine convergence
-	// when severity drops or the issue count shrinks. Only treat it as churn
-	// when the new set is not better on either axis.
-	if currentActionable < previousActionable {
-		return false
-	}
-	if severity.Rank(maxActionableSeverity(current)) < severity.Rank(maxActionableSeverity(previous)) {
-		return false
-	}
-
-	return true
 }
 
 // --- Theme matching and reopen detection ---
@@ -2212,14 +1683,13 @@ func isBlockingSeverity(maxSeverity string) bool {
 
 // --- Iteration limit helpers ---
 
-// effectiveOuterCycles determines the maximum outer audit cycles and whether
-// progress-based detection should be used.
-func effectiveOuterCycles(ep *epic.Epic, complexity ComplexityTier) (maxCycles int, progressBased bool) {
+// effectiveOuterCycles determines the maximum outer audit cycles.
+func effectiveOuterCycles(ep *epic.Epic, complexity ComplexityTier) int {
 	if ep == nil {
-		return config.DefaultMaxOuterAuditCycles, false
+		return config.DefaultMaxOuterAuditCycles
 	}
 	if ep.MaxAuditIterationsSet {
-		return ep.MaxAuditIterations, false
+		return ep.MaxAuditIterations
 	}
 	if complexity == "" || complexity == ComplexityUnknown {
 		return currentDefaultOuterCycles(ep)
@@ -2228,29 +1698,29 @@ func effectiveOuterCycles(ep *epic.Epic, complexity ComplexityTier) (maxCycles i
 	case epic.EffortMax:
 		switch complexity {
 		case ComplexityLow:
-			return 6, true
+			return 6
 		case ComplexityModerate:
-			return 20, true
+			return 20
 		default:
-			return config.MaxOuterCyclesMaxCap, true
+			return config.MaxOuterCyclesMaxCap
 		}
 	case epic.EffortHigh:
 		switch complexity {
 		case ComplexityLow:
-			return 4, true
+			return 4
 		case ComplexityModerate:
-			return 8, true
+			return 8
 		default:
-			return config.MaxOuterCyclesHighCap, true
+			return config.MaxOuterCyclesHighCap
 		}
 	default:
 		switch complexity {
 		case ComplexityLow:
-			return 2, false
+			return 2
 		case ComplexityModerate:
-			return 3, false
+			return 3
 		default:
-			return 5, false
+			return 5
 		}
 	}
 }
@@ -2288,18 +1758,18 @@ func effectiveInnerIter(ep *epic.Epic, complexity ComplexityTier) int {
 	}
 }
 
-func currentDefaultOuterCycles(ep *epic.Epic) (maxCycles int, progressBased bool) {
+func currentDefaultOuterCycles(ep *epic.Epic) int {
 	switch ep.EffortLevel {
 	case epic.EffortMax:
-		return config.MaxOuterCyclesMaxCap, true
+		return config.MaxOuterCyclesMaxCap
 	case epic.EffortHigh:
-		return config.MaxOuterCyclesHighCap, true
+		return config.MaxOuterCyclesHighCap
 	default:
-		maxCycles = ep.MaxAuditIterations
+		maxCycles := ep.MaxAuditIterations
 		if maxCycles <= 0 {
 			maxCycles = config.DefaultMaxOuterAuditCycles
 		}
-		return maxCycles, false
+		return maxCycles
 	}
 }
 
@@ -2311,24 +1781,6 @@ func currentDefaultInnerIter(ep *epic.Epic) int {
 		return config.MaxInnerFixIterHigh
 	default:
 		return config.DefaultMaxInnerFixIter
-	}
-}
-
-// effectiveLowYieldStopCycles returns the number of consecutive low-yield cycles
-// required before the audit loop terminates early. Higher effort levels tolerate
-// more low-yield cycles to give the fix agent additional attempts with strategy
-// shifts (single-issue mode, session refreshes) before giving up.
-func effectiveLowYieldStopCycles(ep *epic.Epic) int {
-	if ep == nil {
-		return config.AuditLowYieldStopCycles
-	}
-	switch ep.EffortLevel {
-	case epic.EffortMax:
-		return config.AuditLowYieldStopCyclesMax
-	case epic.EffortHigh:
-		return config.AuditLowYieldStopCyclesHigh
-	default:
-		return config.AuditLowYieldStopCycles
 	}
 }
 
@@ -2462,7 +1914,7 @@ func runAgentWithLog(ctx context.Context, opts AuditOpts, prompt, logPath, model
 }
 
 // runVerifyPass runs a verify agent against the provided unresolved findings and applies resolutions.
-// It is extracted to avoid duplication between the normal fix→verify path and the all-clusters-skipped path.
+// It is extracted to avoid duplication between the normal fix->verify path and the all-clusters-skipped path.
 func runVerifyPass(
 	ctx context.Context,
 	opts AuditOpts,
@@ -2527,7 +1979,6 @@ func runVerifyPass(
 
 	verifyResults := parseVerificationResults(string(verifyContent), unresolved)
 	verifyResolutions := countResolvedVerificationResults(verifyResults)
-	auditMetrics.BehaviorUnchangedOutcomes += countVerificationResultsWithStatus(verifyResults, verifyStatusBehaviorUnchanged)
 	auditMetrics.Record(CallMetric{
 		SessionType: engine.SessionAuditVerify,
 		Cycle:       cycle,

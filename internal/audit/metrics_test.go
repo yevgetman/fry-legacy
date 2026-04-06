@@ -14,42 +14,25 @@ import (
 func TestAuditMetricsRecordAndSummary(t *testing.T) {
 	t.Parallel()
 
-	metrics := &AuditMetrics{
-		RepeatedUnchangedFindings:    2,
-		SuppressedUnchangedFindings:  1,
-		ReopenedWithNewEvidence:      1,
-		BehaviorUnchangedOutcomes:    3,
-		BehaviorUnchangedEscalations: 1,
-		LowYieldStrategyChanges:      1,
-		LowYieldStopReason:           "low_yield cycle=2",
-		StrategyShifts: []StrategyShift{
-			{Cycle: 2, Trigger: strategyTriggerLowYield, Action: lowYieldStrategySingleIssueNextCycle, Detail: "fix_yield=0.00"},
-		},
-	}
+	metrics := &AuditMetrics{}
 	metrics.Record(CallMetric{SessionType: engine.SessionAudit, PromptBytes: 100, DurationMs: 10})
-	metrics.Record(CallMetric{SessionType: engine.SessionAuditFix, Cycle: 1, PromptBytes: 120, DurationMs: 20, WasNoOp: true, ValidationResult: fixValidationRejected})
-	metrics.Record(CallMetric{SessionType: engine.SessionAuditFix, Cycle: 1, PromptBytes: 140, DurationMs: 25, ValidationResult: fixValidationAccepted})
+	metrics.Record(CallMetric{SessionType: engine.SessionAuditFix, Cycle: 1, PromptBytes: 120, DurationMs: 20, WasNoOp: true})
+	metrics.Record(CallMetric{SessionType: engine.SessionAuditFix, Cycle: 1, PromptBytes: 140, DurationMs: 25})
 	metrics.Record(CallMetric{SessionType: engine.SessionAuditVerify, Cycle: 1, PromptBytes: 80, DurationMs: 30, Resolutions: 2})
 	metrics.RecordCycleSummary(1)
 
 	assert.Equal(t, 4, metrics.TotalCalls())
 	assert.Equal(t, int64(85), metrics.TotalDurationMs())
 	assert.InDelta(t, 0.5, metrics.NoOpRate(), 0.001)
-	assert.Equal(t, 1, metrics.TotalAcceptedFixCalls())
-	assert.Equal(t, 1, metrics.TotalRejectedFixCalls())
-	assert.Equal(t, 2, metrics.Snapshot().RepeatedUnchanged)
-	assert.Equal(t, 1, metrics.Snapshot().SuppressedUnchanged)
-	assert.Equal(t, 1, metrics.Snapshot().ReopenedWithNewEvidence)
-	assert.Equal(t, 3, metrics.Snapshot().BehaviorUnchanged)
-	assert.Equal(t, 1, metrics.Snapshot().BehaviorEscalations)
-	assert.Equal(t, 1, metrics.Snapshot().LowYieldStrategyChanges)
-	assert.Equal(t, "low_yield cycle=2", metrics.Snapshot().LowYieldStopReason)
-	assert.Equal(t, 1, metrics.Snapshot().StrategyShiftCount)
-	assert.Contains(t, metrics.Snapshot().LastStrategyShift, strategyTriggerLowYield)
-	assert.InDelta(t, 1.0, metrics.Snapshot().LastCycleFixYield, 0.001)
-	assert.InDelta(t, 2.0, metrics.Snapshot().LastCycleVerifyYield, 0.001)
 	assert.InDelta(t, 2.0, metrics.VerifyYield(), 0.001)
 	assert.Equal(t, 110, metrics.AvgPromptBytes())
+
+	snapshot := metrics.Snapshot()
+	assert.Equal(t, 4, snapshot.TotalCalls)
+	assert.Equal(t, 1, snapshot.NoOpFixCalls)
+	assert.Equal(t, 1, snapshot.VerifyCalls)
+	assert.Equal(t, 2, snapshot.VerifyResolutions)
+	assert.Equal(t, 0, snapshot.SessionRefreshes)
 }
 
 func TestAuditMetricsMarshalJSON(t *testing.T) {
@@ -65,20 +48,10 @@ func TestAuditMetricsMarshalJSON(t *testing.T) {
 				SessionRefreshReason: "call budget reached (4)",
 			},
 		},
-		OuterCycles:                  2,
-		ContentComplexity:            ComplexityModerate,
-		FinalFindingCount:            1,
-		BehaviorUnchangedOutcomes:    1,
-		BehaviorUnchangedEscalations: 1,
-		SessionRefreshes:             1,
-		LowYieldStrategyChanges:      1,
-		LowYieldStopReason:           "low_yield cycle=2",
-		StrategyShifts: []StrategyShift{
-			{Cycle: 2, Trigger: strategyTriggerLowYield, Action: lowYieldStrategySingleIssueNextCycle, Detail: "fix_yield=0.00"},
-		},
-		SessionRefreshReasons: map[string]int{
-			"call budget reached (4)": 1,
-		},
+		OuterCycles:       2,
+		ContentComplexity: ComplexityModerate,
+		FinalFindingCount: 1,
+		SessionRefreshes:  1,
 	}
 
 	data, err := json.Marshal(metrics)
@@ -90,22 +63,7 @@ func TestAuditMetricsMarshalJSON(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, float64(1), summary["total_calls"])
 	assert.Equal(t, float64(1), summary["no_op_fix_calls"])
-	assert.Equal(t, float64(0), summary["accepted_fix_calls"])
-	assert.Equal(t, float64(0), summary["rejected_fix_calls"])
-	assert.Equal(t, float64(0), summary["repeated_unchanged_findings"])
-	assert.Equal(t, float64(0), summary["suppressed_unchanged_findings"])
-	assert.Equal(t, float64(0), summary["reopened_with_new_evidence"])
-	assert.Equal(t, float64(1), summary["behavior_unchanged_outcomes"])
-	assert.Equal(t, float64(1), summary["behavior_unchanged_escalations"])
-	assert.Equal(t, float64(1), summary["session_refreshes"])
-	assert.Equal(t, float64(1), summary["strategy_shift_count"])
-	assert.Contains(t, summary["last_strategy_shift"], strategyTriggerLowYield)
-	assert.Equal(t, float64(1), summary["low_yield_strategy_changes"])
-	assert.Equal(t, "low_yield cycle=2", summary["low_yield_stop_reason"])
 	assert.Equal(t, float64(1), payload["session_refreshes"])
-	assert.Equal(t, float64(1), payload["session_refresh_reasons"].(map[string]any)["call budget reached (4)"])
-	assert.Equal(t, float64(1), payload["low_yield_strategy_changes"])
-	assert.Equal(t, "low_yield cycle=2", payload["low_yield_stop_reason"])
 }
 
 func TestCallMetricTokenParsing(t *testing.T) {
@@ -132,76 +90,28 @@ func TestAuditMetricsRecordTracksSessionRefreshes(t *testing.T) {
 	snapshot := metrics.Snapshot()
 
 	assert.Equal(t, 2, metrics.SessionRefreshes)
-	assert.Equal(t, 2, metrics.SessionRefreshReasons["call budget reached (3)"])
 	assert.Equal(t, 2, snapshot.SessionRefreshes)
 }
 
-func TestAuditMetricsCycleSummariesAndTrailingYield(t *testing.T) {
+func TestAuditMetricsCycleSummariesAndYield(t *testing.T) {
 	t.Parallel()
 
 	metrics := &AuditMetrics{}
 
 	metrics.Record(CallMetric{SessionType: engine.SessionAudit, Cycle: 1, DurationMs: 10})
-	metrics.Record(CallMetric{SessionType: engine.SessionAuditFix, Cycle: 1, DurationMs: 20, WasNoOp: true, Tokens: tokenmetrics.TokenUsage{Input: 5, Output: 3, Total: 8, CacheReadInput: 40}})
+	metrics.Record(CallMetric{SessionType: engine.SessionAuditFix, Cycle: 1, DurationMs: 20, WasNoOp: true, Tokens: tokenmetrics.TokenUsage{Input: 5, Output: 3, Total: 8}})
 	metrics.Record(CallMetric{SessionType: engine.SessionAuditVerify, Cycle: 1, DurationMs: 30, Resolutions: 1, Tokens: tokenmetrics.TokenUsage{Input: 4, Output: 2, Total: 6}})
 	metrics.RecordCycleSummary(1)
 
 	metrics.Record(CallMetric{SessionType: engine.SessionAudit, Cycle: 2, DurationMs: 15, Tokens: tokenmetrics.TokenUsage{Input: 2, Output: 1, Total: 3}})
-	metrics.Record(CallMetric{SessionType: engine.SessionAuditFix, Cycle: 2, DurationMs: 25, Tokens: tokenmetrics.TokenUsage{Input: 7, Output: 4, Total: 11, CacheCreationInput: 9}})
+	metrics.Record(CallMetric{SessionType: engine.SessionAuditFix, Cycle: 2, DurationMs: 25, Tokens: tokenmetrics.TokenUsage{Input: 7, Output: 4, Total: 11}})
 	metrics.Record(CallMetric{SessionType: engine.SessionAuditVerify, Cycle: 2, DurationMs: 35, Resolutions: 0, Tokens: tokenmetrics.TokenUsage{Input: 3, Output: 1, Total: 4}})
 	metrics.RecordCycleSummary(2)
 
 	require.Len(t, metrics.CycleSummaries, 2)
 	assert.Equal(t, 1, metrics.CycleSummaries[0].NoOpFixCalls)
 	assert.Equal(t, 14, metrics.CycleSummaries[0].TokenTotal)
-	assert.Equal(t, 40, metrics.CycleSummaries[0].CacheReadInput)
 	assert.InDelta(t, 0.0, metrics.CycleSummaries[1].FixYield, 0.001)
 	assert.InDelta(t, 0.0, metrics.CycleSummaries[1].VerifyYield, 0.001)
 	assert.Equal(t, 18, metrics.CycleSummaries[1].TokenTotal)
-	assert.Equal(t, 9, metrics.CycleSummaries[1].CacheCreationInput)
-
-	snapshot := metrics.Snapshot()
-	assert.InDelta(t, 0.0, snapshot.LastCycleFixYield, 0.001)
-	assert.InDelta(t, 0.0, snapshot.LastCycleVerifyYield, 0.001)
-	assert.InDelta(t, 0.0, snapshot.LastCycleNoOpRate, 0.001)
-	assert.InDelta(t, 0.5, snapshot.TrailingFixYield, 0.001)
-	assert.InDelta(t, 0.5, snapshot.TrailingVerifyYield, 0.001)
-	assert.InDelta(t, 0.5, snapshot.TrailingNoOpRate, 0.001)
-	assert.InDelta(t, 135.0, snapshot.TrailingMsPerResolution, 0.001)
-}
-
-func TestAuditMetricsAcceptedPartialCountsAsAccepted(t *testing.T) {
-	t.Parallel()
-
-	metrics := &AuditMetrics{}
-	metrics.Record(CallMetric{SessionType: engine.SessionAuditFix, Cycle: 1, ValidationResult: fixValidationAccepted})
-	metrics.Record(CallMetric{SessionType: engine.SessionAuditFix, Cycle: 1, ValidationResult: fixValidationAcceptedPartial})
-	metrics.Record(CallMetric{SessionType: engine.SessionAuditFix, Cycle: 1, ValidationResult: fixValidationRejected})
-
-	assert.Equal(t, 2, metrics.TotalAcceptedFixCalls(), "accepted + accepted_partial should both count")
-	assert.Equal(t, 1, metrics.TotalPartialFixCalls())
-	assert.Equal(t, 1, metrics.TotalRejectedFixCalls())
-	assert.Equal(t, 2, metrics.Snapshot().AcceptedFixCalls)
-	assert.Equal(t, 1, metrics.Snapshot().PartialFixCalls)
-}
-
-func TestUpdateLastCallRollback(t *testing.T) {
-	t.Parallel()
-
-	metrics := &AuditMetrics{}
-	metrics.Record(CallMetric{SessionType: engine.SessionAuditFix, ValidationResult: fixValidationRejected})
-	metrics.UpdateLastCallRollback([]string{"a.go", "b.go"})
-
-	assert.Equal(t, []string{"a.go", "b.go"}, metrics.Calls[0].RolledBackFiles)
-}
-
-func TestUpdateLastCallPartial(t *testing.T) {
-	t.Parallel()
-
-	metrics := &AuditMetrics{}
-	metrics.Record(CallMetric{SessionType: engine.SessionAuditFix, ValidationResult: fixValidationAccepted})
-	metrics.UpdateLastCallPartial([]string{"extra.go"}, fixValidationAcceptedPartial)
-
-	assert.Equal(t, fixValidationAcceptedPartial, metrics.Calls[0].ValidationResult)
-	assert.Equal(t, []string{"extra.go"}, metrics.Calls[0].RolledBackFiles)
 }

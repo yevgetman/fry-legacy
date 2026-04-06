@@ -94,33 +94,14 @@ type AlignmentStatus struct {
 }
 
 type AuditMetricsSnapshot struct {
-	TotalCalls               int     `json:"total_calls"`
-	DurationMs               int64   `json:"duration_ms"`
-	NoOpFixCalls             int     `json:"no_op_fix_calls"`
-	AcceptedFixCalls         int     `json:"accepted_fix_calls"`
-	RejectedFixCalls         int     `json:"rejected_fix_calls"`
-	RepeatedUnchanged        int     `json:"repeated_unchanged_findings"`
-	SuppressedUnchanged      int     `json:"suppressed_unchanged_findings"`
-	ReopenedWithNewEvidence  int     `json:"reopened_with_new_evidence"`
-	BehaviorUnchanged        int     `json:"behavior_unchanged_outcomes"`
-	BehaviorEscalations      int     `json:"behavior_unchanged_escalations"`
-	SessionRefreshes         int     `json:"session_refreshes"`
-	NoOpRate                 float64 `json:"no_op_rate"`
-	VerifyCalls              int     `json:"verify_calls"`
-	VerifyResolutions        int     `json:"verify_resolutions"`
-	VerifyYield              float64 `json:"verify_yield"`
-	LastCycleFixYield        float64 `json:"last_cycle_fix_yield"`
-	LastCycleVerifyYield     float64 `json:"last_cycle_verify_yield"`
-	LastCycleNoOpRate        float64 `json:"last_cycle_no_op_rate"`
-	LastCycleMsPerResolution float64 `json:"last_cycle_ms_per_resolution"`
-	TrailingFixYield         float64 `json:"trailing_fix_yield"`
-	TrailingVerifyYield      float64 `json:"trailing_verify_yield"`
-	TrailingNoOpRate         float64 `json:"trailing_no_op_rate"`
-	TrailingMsPerResolution  float64 `json:"trailing_ms_per_resolution"`
-	StrategyShiftCount       int     `json:"strategy_shift_count"`
-	LastStrategyShift        string  `json:"last_strategy_shift,omitempty"`
-	LowYieldStrategyChanges  int     `json:"low_yield_strategy_changes"`
-	LowYieldStopReason       string  `json:"low_yield_stop_reason,omitempty"`
+	TotalCalls       int     `json:"total_calls"`
+	DurationMs       int64   `json:"duration_ms"`
+	NoOpFixCalls     int     `json:"no_op_fix_calls"`
+	SessionRefreshes int     `json:"session_refreshes"`
+	NoOpRate         float64 `json:"no_op_rate"`
+	VerifyCalls      int     `json:"verify_calls"`
+	VerifyResolutions int    `json:"verify_resolutions"`
+	VerifyYield      float64 `json:"verify_yield"`
 }
 
 type AuditBlocker struct {
@@ -146,9 +127,7 @@ type AuditStatus struct {
 	MaxFixes       int                   `json:"max_fixes,omitempty"`       // configured inner fix cap
 	TargetIssues   int                   `json:"target_issues,omitempty"`   // issues currently being fixed/verified
 	IssueHeadlines []string              `json:"issue_headlines,omitempty"` // compact descriptions of targeted issues
-	Reopenings     int                   `json:"reopenings,omitempty"`      // findings suppressed as probable reopenings
 	Complexity     string                `json:"complexity,omitempty"`
-	StopReason     string                `json:"stop_reason,omitempty"`
 	Metrics        *AuditMetricsSnapshot `json:"metrics,omitempty"`
 }
 

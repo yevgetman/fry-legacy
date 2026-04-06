@@ -79,24 +79,7 @@ const (
 	FixSessionMaxPromptBytes             = 48_000
 	FixSessionMaxTokens                  = 20_000
 	FixSessionMaxCarry                   = 10 // unresolved findings carried into one same-role fix session before refresh
-	AuditLowYieldTrailingCycles          = 2
-	AuditLowYieldMinFixCalls             = 2
-	AuditLowYieldVerifyYieldFloor        = 0.75
-	AuditLowYieldFixYieldFloor           = 0.50
-	AuditLowYieldNoOpRateFloor           = 0.50
-	AuditLowYieldStopCycles              = 2  // default (standard effort)
-	AuditLowYieldStopCyclesHigh          = 3  // high effort — one extra chance in single-issue mode
-	AuditLowYieldStopCyclesMax           = 5  // max effort — persistent retry before giving up
-	AuditGovernorTokenBurnThreshold      = 20_000
-	AuditGovernorCacheReadThreshold      = 100_000
-	AuditGovernorCachePressureMultiplier = 4.0
-	BehaviorUnchangedEscalationThreshold = 2
-	BehaviorUnchangedStopThreshold       = 3
-
-	// Fix strategy constants
-	AuditFixStrategyPerCluster = "per_cluster" // one cluster per fix call with fast-fail
-	AuditFixStrategyDefault    = AuditFixStrategyPerCluster
-	MaxClusterFixFileBytes     = 8_000 // max bytes of target file content inlined per file in cluster fix prompt
+	MaxFixFileInlineBytes = 8_000 // max bytes of target file content inlined per file in fix prompt
 
 	DeferredFailuresFile = ".fry/deferred-failures.md"
 
