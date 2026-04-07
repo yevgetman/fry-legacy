@@ -2,7 +2,6 @@ package verify
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -12,7 +11,7 @@ import (
 // during self-validation.
 type HarnessIssue struct {
 	Sprint  int
-	Type    string // "path_mismatch", "suspicious_glob", "missing_parent_dir"
+	Type    string // "path_mismatch", "suspicious_glob", "invalid_regex", "unescaped_regex_metachar"
 	Target  string
 	Message string
 }
@@ -98,23 +97,14 @@ func validateFileTarget(projectDir string, c Check, result *HarnessCheckResult) 
 		return
 	}
 
-	// Check that the parent directory exists (the file itself may not
-	// exist yet — the sprint is supposed to create it — but the parent
-	// directory should at least be plausible).
-	fullPath := filepath.Join(projectDir, cleaned)
-	parentDir := filepath.Dir(fullPath)
-	if _, err := os.Stat(parentDir); os.IsNotExist(err) {
-		// Only flag this for paths with at least one directory component.
-		// A bare filename like "main.go" resolves to the project root which always exists.
-		if strings.Contains(cleaned, string(filepath.Separator)) {
-			result.Issues = append(result.Issues, HarnessIssue{
-				Sprint:  c.Sprint,
-				Type:    "missing_parent_dir",
-				Target:  target,
-				Message: fmt.Sprintf("parent directory %s does not exist", filepath.Dir(cleaned)),
-			})
-		}
-	}
+	// Note: we intentionally do NOT validate parent-directory existence here.
+	// The harness self-check runs once before the sprint loop starts, but
+	// from-scratch builds expect the entire directory tree to be created by
+	// sprint 1. Flagging "parent directory does not exist" produced a wall of
+	// false-positive warnings on every nested @check_file target. The runtime
+	// check (verify.RunChecks) still catches actually-missing files after the
+	// sprint runs, when they are supposed to exist.
+	_ = projectDir
 }
 
 // validateRegexPattern checks that patterns used in grep -E checks are

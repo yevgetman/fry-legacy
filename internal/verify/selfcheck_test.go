@@ -13,9 +13,6 @@ func TestValidateHarness_AllValid(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 
-	// Create a subdirectory for the file target's parent
-	require.NoError(t, os.MkdirAll(filepath.Join(dir, "src"), 0o755))
-
 	checks := []Check{
 		{Sprint: 1, Type: CheckFile, Path: "src/main.go"},
 		{Sprint: 1, Type: CheckCmd, Command: "go build ./..."},
@@ -50,25 +47,25 @@ func TestValidateHarness_PathTraversal(t *testing.T) {
 	assert.Contains(t, result.Issues[0].Message, "traverses outside")
 }
 
-func TestValidateHarness_MissingParentDir(t *testing.T) {
+func TestValidateHarness_MissingParentDir_NotFlagged(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 
+	// Missing parent directories MUST NOT be flagged. The harness self-check
+	// runs once before sprint 1, but from-scratch builds expect the entire
+	// directory tree to be created by sprint 1. The runtime check
+	// (verify.RunChecks) catches actually-missing files after the sprint runs.
 	checks := []Check{
 		{Sprint: 2, Type: CheckFile, Path: "nonexistent/subdir/file.go"},
 	}
 	result := ValidateHarness(dir, checks)
-	require.True(t, result.HasIssues())
-	assert.Equal(t, "missing_parent_dir", result.Issues[0].Type)
-	assert.Equal(t, 2, result.Issues[0].Sprint)
+	assert.False(t, result.HasIssues(), "missing parent dirs should not produce harness issues")
 }
 
 func TestValidateHarness_BareFilename_NoIssue(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 
-	// Bare filenames (no directory component) should not flag missing_parent_dir
-	// because the parent is the project root which always exists.
 	checks := []Check{
 		{Sprint: 1, Type: CheckFile, Path: "go.mod"},
 	}
@@ -104,8 +101,6 @@ func TestValidateHarness_FileContainsCheck(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 
-	require.NoError(t, os.MkdirAll(filepath.Join(dir, "config"), 0o755))
-
 	checks := []Check{
 		{Sprint: 1, Type: CheckFileContains, Path: "config/app.yaml", Pattern: "port: 8080"},
 	}
@@ -119,11 +114,11 @@ func TestValidateHarness_MultipleIssues(t *testing.T) {
 
 	checks := []Check{
 		{Sprint: 1, Type: CheckFile, Path: "/absolute/bad"},
-		{Sprint: 2, Type: CheckFile, Path: "missing/dir/file.go"},
+		{Sprint: 2, Type: CheckFile, Path: "missing/dir/file.go"}, // not flagged anymore
 		{Sprint: 3, Type: CheckCmd, Command: ""},
 	}
 	result := ValidateHarness(dir, checks)
-	assert.Len(t, result.Issues, 3)
+	assert.Len(t, result.Issues, 2, "missing parent dirs no longer count as issues")
 }
 
 func TestHarnessCheckResult_Summary(t *testing.T) {
