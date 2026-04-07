@@ -75,12 +75,33 @@ func TestTickSchedulerWakeMessageContainsBuildDir(t *testing.T) {
 		},
 		wakeCounter: 1,
 	}
-	msg := s.wakeMessage()
+	msg := s.wakeMessageAt(time.Now().UTC())
 	assert.Contains(t, msg, "/tmp/example-build-dir")
 	assert.Contains(t, msg, "Tick Checklist")
 	assert.Contains(t, msg, "manifest.json")
 	assert.Contains(t, msg, "state-snapshot.json")
 	assert.Contains(t, msg, "Wake #1")
+}
+
+func TestTickSchedulerWakeMessageIncludesCurrentUTCTime(t *testing.T) {
+	t.Parallel()
+
+	// Use a fixed, non-now time so we can assert the exact ISO string
+	// appears in the message — this guards against future regressions
+	// where the wake message accidentally drops or rewrites the time.
+	fixed := time.Date(2026, 4, 7, 21, 33, 54, 0, time.UTC)
+	s := &TickScheduler{
+		opts:        SchedulerOpts{BuildDir: "/x"},
+		wakeCounter: 1,
+	}
+	msg := s.wakeMessageAt(fixed)
+	assert.Contains(t, msg, "Current UTC time:")
+	assert.Contains(t, msg, "2026-04-07T21:33:54Z",
+		"wake message must include the exact ISO timestamp passed in — "+
+			"this is what stops the agent from re-using bootstrap-time {{.NowISO}}")
+	assert.Contains(t, msg, "do NOT reuse the bootstrap-time timestamp",
+		"wake message must explicitly tell the agent not to fall back to the "+
+			"frozen template variable")
 }
 
 func TestTickSchedulerWakeMessageIncrementsWakeNumber(t *testing.T) {
@@ -89,9 +110,10 @@ func TestTickSchedulerWakeMessageIncrementsWakeNumber(t *testing.T) {
 	s := &TickScheduler{
 		opts: SchedulerOpts{BuildDir: "/x"},
 	}
+	now := time.Now().UTC()
 	for i := 1; i <= 3; i++ {
 		s.wakeCounter = i
-		assert.True(t, strings.Contains(s.wakeMessage(), "Wake #"+strings.TrimSpace(intToStringForTest(i))))
+		assert.True(t, strings.Contains(s.wakeMessageAt(now), "Wake #"+strings.TrimSpace(intToStringForTest(i))))
 	}
 }
 

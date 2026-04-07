@@ -17,6 +17,7 @@ import (
 
 	"github.com/yevgetman/fry/internal/config"
 	"github.com/yevgetman/fry/internal/copilot"
+	"github.com/yevgetman/fry/internal/observer"
 )
 
 // resetCobraFlagsRecursive resets flag values for the copilot subcommand
@@ -120,7 +121,15 @@ func TestCopilotStatusAbsent(t *testing.T) {
 func TestCopilotStatusActive(t *testing.T) {
 	dir := t.TempDir()
 	plantCopilotManifest(t, dir, "test-session-uuid")
+	// ACTIVE requires the build to be alive AND at least one wake event
+	// to have been emitted by the in-process scheduler. The cron ID file
+	// is from the deprecated CronCreate-based design and no longer drives
+	// status — it's still displayed for diagnostic purposes only.
 	require.NoError(t, copilot.WriteCronIDFile(dir, "cron_test"))
+	require.NoError(t, copilot.EmitEvent(dir, copilot.Event{
+		Type: observer.EventCopilotWakeStart,
+		Data: map[string]string{"wake_number": "1"},
+	}))
 
 	out, err := runRootCmd(t, "copilot", "status", "--project-dir", dir)
 	require.NoError(t, err)
@@ -129,6 +138,41 @@ func TestCopilotStatusActive(t *testing.T) {
 	assert.Contains(t, out, "cron_test")
 	assert.Contains(t, out, "claude")
 	assert.Contains(t, out, "opus[1m]")
+}
+
+func TestCopilotStatusStartingWhenAliveWithNoWakes(t *testing.T) {
+	dir := t.TempDir()
+	plantCopilotManifest(t, dir, "test-session-uuid")
+	// No wake events emitted. Build PID is os.Getpid() (alive). The
+	// in-process scheduler hasn't fired its first tick yet — STARTING is
+	// the correct state. This is the regression case for Bug 13: the
+	// original implementation looked at the cron file (which the new
+	// scheduler never writes) and reported STARTING forever, even after
+	// many ticks had fired.
+	out, err := runRootCmd(t, "copilot", "status", "--project-dir", dir)
+	require.NoError(t, err)
+	assert.Contains(t, out, "STARTING")
+}
+
+func TestCopilotStatusStaleAfterWakesWhenBuildDead(t *testing.T) {
+	dir := t.TempDir()
+	// Manifest with a deliberately dead PID — pid 1 (init/launchd) is
+	// alive but not owned by this user, so processAlive returns true.
+	// Use a definitely-dead pid by manifesting our own pid then mutating
+	// the file with an obviously-dead value.
+	m := plantCopilotManifest(t, dir, "test-session-uuid")
+	m.BuildPID = 0 // 0 is treated as dead by processAlive
+	require.NoError(t, copilot.WriteManifest(dir, m))
+	// Plant a wake event so hasWakeEvents=true.
+	require.NoError(t, copilot.EmitEvent(dir, copilot.Event{
+		Type: observer.EventCopilotWakeStart,
+		Data: map[string]string{"wake_number": "1"},
+	}))
+
+	out, err := runRootCmd(t, "copilot", "status", "--project-dir", dir)
+	// STALE returns exit code 2 for scripting.
+	require.Error(t, err)
+	assert.Contains(t, out, "STALE")
 }
 
 func TestCopilotStatusJSON(t *testing.T) {

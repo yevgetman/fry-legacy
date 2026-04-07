@@ -140,7 +140,8 @@ func (s *TickScheduler) run() {
 // result.log and as observer events; the scheduler keeps running.
 func (s *TickScheduler) tick() {
 	s.wakeCounter++
-	wakeID := time.Now().UTC().Format("20060102-150405")
+	startedAt := time.Now().UTC()
+	wakeID := startedAt.Format("20060102-150405")
 	wakeDir := filepath.Join(s.opts.ProjectDir, config.CopilotWakesDir, wakeID)
 	if err := os.MkdirAll(wakeDir, 0o755); err != nil {
 		// Best-effort; if the dir can't be created we still try the tick
@@ -154,7 +155,14 @@ func (s *TickScheduler) tick() {
 		defer resultFile.Close()
 	}
 
-	startedAt := time.Now().UTC()
+	// Refresh the state snapshot before the agent reads it. Without this
+	// call the snapshot is only rewritten on observer event boundaries
+	// (sprint_start, sprint_complete, audit_*, etc.), so during a long
+	// in-progress sprint the agent would see stale build_phase /
+	// current_sprint values. Force bypasses the 10s debounce — ticks
+	// happen at minute-scale cadence so debounce is irrelevant here.
+	_ = ForceWriteStateSnapshot(s.opts.ProjectDir)
+
 	_ = EmitEvent(s.opts.ProjectDir, Event{
 		Type: observer.EventCopilotWakeStart,
 		Data: map[string]string{
@@ -164,7 +172,7 @@ func (s *TickScheduler) tick() {
 		},
 	})
 
-	wakeMsg := s.wakeMessage()
+	wakeMsg := s.wakeMessageAt(startedAt)
 	ctx, cancel := context.WithTimeout(
 		context.Background(),
 		time.Duration(config.CopilotTickSubprocessTimeoutSec)*time.Second,
@@ -222,15 +230,24 @@ func (s *TickScheduler) tick() {
 	})
 }
 
-// wakeMessage returns the prompt that fry main passes to each tick
+// wakeMessageAt returns the prompt that fry main passes to each tick
 // subprocess. The message is intentionally short — the full bootstrap
 // context already lives in the resumed session.
-func (s *TickScheduler) wakeMessage() string {
+//
+// The message includes "Current UTC time: <ISO>" so the agent has a
+// fresh ground-truth timestamp for events.txt and scratchpad entries.
+// Without this, the agent would substitute the bootstrap-time
+// {{.NowISO}} value (frozen at session start) into every wake's notes,
+// producing entries that drift further from reality with every tick.
+func (s *TickScheduler) wakeMessageAt(now time.Time) string {
 	return fmt.Sprintf(
-		"Wake up and run your tick procedure. Re-read .fry/copilot/manifest.json and "+
-			".fry/copilot/state-snapshot.json for current config and build state, then "+
-			"follow the Tick Checklist in your bootstrap prompt. Build dir: %s. Wake #%d.",
-		s.opts.BuildDir, s.wakeCounter)
+		"Wake up and run your tick procedure. Current UTC time: %s. "+
+			"Re-read .fry/copilot/manifest.json and .fry/copilot/state-snapshot.json "+
+			"for current config and build state, then follow the Tick Checklist in "+
+			"your bootstrap prompt. Use the Current UTC time above for any events.txt, "+
+			"scratchpad, or intervention timestamps you write — do NOT reuse the "+
+			"bootstrap-time timestamp from the original prompt. Build dir: %s. Wake #%d.",
+		now.UTC().Format(time.RFC3339), s.opts.BuildDir, s.wakeCounter)
 }
 
 // buildTickArgs builds the argv for a single tick subprocess. The wake

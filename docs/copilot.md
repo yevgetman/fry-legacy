@@ -30,7 +30,8 @@ The mental model:
 - **The session is the conversation, not a long-running process.** Claude Code stores the conversation under `~/.claude/projects/<hash>/<session-id>.jsonl`. Any process that resumes that session sees the full history.
 - **fry main is the scheduler.** A goroutine inside fry main fires every `--copilot-interval` (default 10m) and spawns a fresh `claude --resume <session-id> -p "<wake msg>"` subprocess. Each tick runs one pass of the Tick Checklist and exits. The goroutine starts after the bootstrap subprocess completes and stops when fry main exits (via deferred cleanup). This replaces an earlier design that tried to use Claude Code's `CronCreate` tool — that approach failed because `CronCreate` jobs live only inside the parent claude session, and the bootstrap subprocess (`claude -p`) exits seconds after installing the cron, taking the cron with it.
 - **First tick fires after a 60-second warm-up.** Sprint-1 setup failures (e.g., docker port conflicts) usually happen within seconds of bootstrap. The warm-up gives fry main a chance to finish sprint setup before the copilot's first tick fires; the 60s window is short enough to catch early failures and still leave the copilot useful as an early-warning system.
-- **`bootstrap.pid` is informational, not a liveness signal.** The bootstrap subprocess exits within seconds of finishing its setup turn. `fry copilot status` reports liveness based on the *build* PID, not the bootstrap PID.
+- **`bootstrap.pid` is informational, not a liveness signal.** The bootstrap subprocess exits within seconds of finishing its setup turn. `fry copilot status` reports liveness based on the *build* PID plus the presence of `copilot_wake_start` events in `events.jsonl` — the wake events are the authoritative signal that the in-process scheduler is firing. (The `cron.id` file is from the deprecated CronCreate-based design and no longer drives status.)
+- **Each wake message includes the current UTC time.** fry's `TickScheduler` passes a fresh `Current UTC time: <ISO>` field in every wake message so the agent has a ground-truth timestamp for events.txt and scratchpad entries. This is critical because the bootstrap prompt is rendered once at session start; any `{{.NowISO}}` substitution in that prompt is frozen, and the agent would otherwise reuse the bootstrap timestamp for every wake. The bootstrap template uses an explicit `<UTC NOW>` placeholder in all wake-time entries to make this contract visible to the agent.
 - **Auto-compact handles growth.** A 6-hour build × 10 min ticks ≈ 180k tokens, well under 1M.
 - **Attach is trivial.** One stable session ID. `fry copilot attach` resumes it.
 - **Cost is lower than per-tick re-bootstrapping.** Each tick reuses the conversation context instead of re-embedding identity, authority, and build state.
@@ -75,6 +76,13 @@ fry main: exit (deferred cleanup) → TickScheduler.Stop()
 ### State snapshot
 
 fry's main process writes `.fry/copilot/state-snapshot.json` at every observer wake-point (sprint start/complete, audit complete, build audit done, build end). The write is atomic via tmpfile + rename, debounced to at most one write per 10 seconds. The copilot re-reads this file on every tick to get fresh build state without re-parsing the canonical `build-status.json`.
+
+To prevent the snapshot from going stale during long-running phases (where no observer events fire for minutes at a time), two additional refresh points exist:
+
+1. **Tick-time refresh.** The in-process `TickScheduler` calls `ForceWriteStateSnapshot` at the start of every tick, just before the wake-start event is emitted. This guarantees the agent reads up-to-date `build_phase`, `current_sprint`, and `recent_events_tail` values when it wakes.
+2. **CLI-time refresh.** `fry copilot status` calls `ForceWriteStateSnapshot` before reading the snapshot file, so users querying the CLI never see stale state. This bypasses the 10-second debounce — `Force*` is exempt by design.
+
+Both refresh points are bounded by the existing manifest gate (`CopilotConfigured`), so they are no-ops when the project has no copilot.
 
 ## File layout
 
@@ -297,8 +305,8 @@ Messages you send become part of the conversation. The copilot logs them under "
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `copilot status` shows `STARTING` forever | bootstrap subprocess crashed before installing cron | check `.fry/copilot/bootstrap.log` |
-| `copilot status` shows `STALE` | cron was installed but the build process has died | the build itself stopped; check fry's main log and consider `fry run --continue` |
+| `copilot status` shows `STARTING` forever | bootstrap subprocess crashed before the in-process scheduler emitted its first wake event, OR the scheduler goroutine failed to start | check `.fry/copilot/bootstrap.log` and `.fry/copilot/events.jsonl` for `copilot_wake_start` entries |
+| `copilot status` shows `STALE` | at least one wake fired previously, but the build process has since died | the build itself stopped; check fry's main log and consider `fry run --continue` |
 | Session ID is `(pending)` | engine doesn't support `--session-id`; capture from stdout failed | check bootstrap.log for the result event; manifest will be updated when the agent emits it |
 | `attach` fails with "session ID is not yet captured" | bootstrap is still running | wait 30s and retry, or check bootstrap.log |
 | `attach` exits with code 3 | tick.lock is held by a live process | wait ~30s and retry, or use `--print-only` |
