@@ -65,9 +65,17 @@ func SetupStrategyWith(ctx context.Context, opts StrategyOpts, ex Executor) (*St
 func setupBranch(ctx context.Context, projectDir, branchName, origBranch string, forceReuse bool, ex Executor) (*StrategySetup, error) {
 	exists := ex.BranchExists(ctx, projectDir, branchName)
 
-	if exists && !forceReuse {
-		return nil, fmt.Errorf("branch %q already exists; use --branch-name to specify a different name, or delete it with: git branch -d %s", branchName, branchName)
-	}
+	// When the branch already exists, REUSE it. The branch name is
+	// deterministic from the epic name, so a branch with this exact
+	// name almost certainly belongs to a previous fry build of the
+	// same epic. Forcing the user to delete it manually is hostile;
+	// the new build's prepare artifacts will overwrite the previous
+	// build's .fry/ contents, and the sprint loop will start fresh.
+	//
+	// `forceReuse` is preserved on StrategyOpts for back-compat but
+	// no longer changes the reuse decision. Concurrent fry runs are
+	// still prevented by .fry/.fry.lock acquired earlier in run.go.
+	_ = forceReuse
 
 	if exists {
 		if err := ex.Checkout(ctx, projectDir, branchName); err != nil {
@@ -94,18 +102,38 @@ func setupWorktree(ctx context.Context, projectDir, branchName, origBranch strin
 
 	exists := worktreeExists(ctx, projectDir, worktreeDir, ex)
 
-	if exists && !forceReuse {
-		return nil, fmt.Errorf("worktree at %q already exists; remove it with: git worktree remove %s", worktreeDir, worktreeDir)
-	}
-
 	if exists {
-		// Validate it's still a valid worktree
+		// Validate it's still a valid worktree before deciding to reuse
+		// or recreate.
 		if !ex.IsRepo(ctx, worktreeDir) {
-			// Worktree directory exists but is invalid; prune and recreate
+			// Worktree directory exists but is invalid (perhaps a
+			// half-cleaned-up prior run). Prune and recreate from scratch.
 			_ = ex.WorktreePrune(ctx, projectDir)
 			exists = false
 		}
 	}
+
+	// When the worktree already exists AND is a valid git repo, REUSE it.
+	// The slug is deterministic from the epic name, so a worktree at this
+	// exact path almost certainly belongs to a previous fry build of the
+	// same epic that crashed, was killed, exited cleanly before reaching
+	// the sprint loop, OR was missed by `fry clean` (which only archives
+	// .fry/, not the worktree directory itself). Forcing the user to
+	// manually `git worktree remove` is hostile — fry should recover
+	// gracefully.
+	//
+	// The previous build's .fry/ artifacts inside the worktree are
+	// re-seeded below from the main checkout's freshly-prepared state,
+	// so the sprint loop sees the new epic.md / AGENTS.md / verification.md.
+	// Source files the previous build modified stay as the previous
+	// build left them, which is the expected resume semantics.
+	//
+	// `forceReuse` (true under --continue/--resume) used to be the only
+	// path that allowed reuse; now reuse is the default. The flag is
+	// preserved on the StrategyOpts for back-compat but no longer
+	// changes the reuse decision. Concurrent fry runs are still
+	// prevented by the .fry/.fry.lock acquired earlier in run.go.
+	_ = forceReuse
 
 	if !exists {
 		if err := os.MkdirAll(filepath.Dir(worktreeDir), 0o755); err != nil {
@@ -116,23 +144,27 @@ func setupWorktree(ctx context.Context, projectDir, branchName, origBranch strin
 		if err := ex.WorktreeAdd(ctx, projectDir, worktreeDir, branchName, createBranch); err != nil {
 			return nil, fmt.Errorf("create worktree: %w", err)
 		}
-
-		// Copy .fry/ and plans/ into worktree so sprint runner finds artifacts.
-		if err := copyDirIfExists(filepath.Join(projectDir, config.FryDir), filepath.Join(worktreeDir, config.FryDir)); err != nil {
-			return nil, fmt.Errorf("copy .fry/ to worktree: %w", err)
-		}
-		if err := copyDirIfExists(filepath.Join(projectDir, config.PlansDir), filepath.Join(worktreeDir, config.PlansDir)); err != nil {
-			return nil, fmt.Errorf("copy plans/ to worktree: %w", err)
-		}
-
-		// The .fry/.fry.lock file is the live process lock for the running
-		// fry main process. It must NOT be carried into the worktree —
-		// otherwise the worktree gets a stale lock containing the parent's
-		// PID, which is never released because the deferred releaseLock()
-		// in run.go uses the original project path. The new worktree starts
-		// with no lock file; the build runs without a per-worktree lock.
-		_ = os.Remove(filepath.Join(worktreeDir, config.LockFile))
 	}
+
+	// Copy/refresh .fry/ and plans/ into the worktree so the sprint
+	// runner finds the latest prepare artifacts. Runs on both the
+	// fresh-create and reuse paths.
+	if err := copyDirIfExists(filepath.Join(projectDir, config.FryDir), filepath.Join(worktreeDir, config.FryDir)); err != nil {
+		return nil, fmt.Errorf("copy .fry/ to worktree: %w", err)
+	}
+	if err := copyDirIfExists(filepath.Join(projectDir, config.PlansDir), filepath.Join(worktreeDir, config.PlansDir)); err != nil {
+		return nil, fmt.Errorf("copy plans/ to worktree: %w", err)
+	}
+
+	// The .fry/.fry.lock file is the live process lock for the running
+	// fry main process. It must NOT be carried into the worktree —
+	// otherwise the worktree gets a stale lock containing the parent's
+	// PID, which is never released because the deferred releaseLock()
+	// in run.go uses the original project path. The new worktree starts
+	// with no lock file; the build runs without a per-worktree lock.
+	// Also catches stale locks left in a reused worktree from the
+	// previous build (Bug 8 fix, generalized to the reuse path).
+	_ = os.Remove(filepath.Join(worktreeDir, config.LockFile))
 
 	return &StrategySetup{
 		WorkDir:        worktreeDir,
@@ -514,19 +546,49 @@ func worktreeSlug(branchName string) string {
 	return slugify(name)
 }
 
+// worktreeExists reports whether worktreeDir is registered as a git
+// worktree of projectDir, OR exists on disk as a (possibly orphaned)
+// directory that the caller would need to deal with anyway.
+//
+// Two-stage check:
+//
+//  1. EvalSymlinks-aware comparison against `git worktree list`. macOS
+//     in particular reports tempdir paths via /private/var/folders/...
+//     while filepath.Abs returns /var/folders/... — without symlink
+//     resolution the string comparison spuriously fails. The same
+//     problem can affect production users whose project root is
+//     reachable through a symlink.
+//
+//  2. Fallback: if the dir exists on disk, return true even if git
+//     doesn't know about it. The caller's reuse/recreate logic
+//     downstream will then handle the "is it actually a valid worktree"
+//     question (via IsRepo).
+//
+// This is broader than "is it a registered worktree" and that's
+// intentional — fry needs to know "should I treat this dir as
+// already-present" to decide whether to reuse vs create.
 func worktreeExists(ctx context.Context, projectDir, worktreeDir string, ex Executor) bool {
 	absWT, err := filepath.Abs(worktreeDir)
 	if err != nil {
 		return false
 	}
-	paths, err := ex.WorktreeList(ctx, projectDir)
-	if err != nil {
-		return false
+	resolvedWT := absWT
+	if r, err := filepath.EvalSymlinks(absWT); err == nil {
+		resolvedWT = r
 	}
-	for _, wt := range paths {
-		if wt == absWT {
-			return true
+	if paths, err := ex.WorktreeList(ctx, projectDir); err == nil {
+		for _, wt := range paths {
+			if wt == absWT || wt == resolvedWT {
+				return true
+			}
+			if r, err := filepath.EvalSymlinks(wt); err == nil && (r == absWT || r == resolvedWT) {
+				return true
+			}
 		}
+	}
+	// Fallback: dir exists on disk even if git doesn't list it.
+	if _, statErr := os.Stat(absWT); statErr == nil {
+		return true
 	}
 	return false
 }

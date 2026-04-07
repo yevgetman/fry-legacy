@@ -188,7 +188,7 @@ func TestSetupStrategy_Branch(t *testing.T) {
 	assert.Equal(t, "fry/test-branch", CurrentBranch(context.Background(), dir))
 }
 
-func TestSetupStrategy_Branch_AlreadyExists(t *testing.T) {
+func TestSetupStrategy_Branch_ReusesExisting(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -207,14 +207,20 @@ func TestSetupStrategy_Branch_AlreadyExists(t *testing.T) {
 	cmd.Dir = dir
 	require.NoError(t, cmd.Run())
 
-	// Try to create same branch without ForceReuse
-	_, err = SetupStrategy(context.Background(), StrategyOpts{
+	// Calling SetupStrategy again with the same branch name MUST succeed
+	// — fry recovers from a previous build's leftover branch by checking
+	// it out instead of erroring (Bug 10 fix). Without this behavior,
+	// `fry clean` not removing the branch would block every subsequent
+	// `fry run`.
+	setup, err := SetupStrategy(context.Background(), StrategyOpts{
 		ProjectDir: dir,
 		Strategy:   StrategyBranch,
 		BranchName: "fry/existing",
 	})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "already exists")
+	require.NoError(t, err, "fry must reuse leftover branches transparently")
+	assert.Equal(t, "fry/existing", setup.BranchName)
+	assert.Equal(t, "fry/existing", CurrentBranch(context.Background(), dir),
+		"the existing branch should be checked out")
 }
 
 func TestSetupStrategy_Branch_ForceReuse(t *testing.T) {
@@ -335,6 +341,67 @@ func TestSetupStrategy_Worktree_LockFileNotCarried(t *testing.T) {
 	assert.NoError(t, err, "other .fry/ files should be copied")
 
 	require.NoError(t, setup.Cleanup())
+}
+
+func TestSetupStrategy_Worktree_ReusesLeftoverFromPriorBuild(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	require.NoError(t, InitGit(context.Background(), dir))
+
+	// Plant prepare artifacts in the main checkout, then create the
+	// worktree (simulating the first fry run).
+	fryDir := filepath.Join(dir, config.FryDir)
+	require.NoError(t, os.MkdirAll(fryDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(fryDir, "epic.md"), []byte("# Old epic\n"), 0o644))
+
+	first, err := SetupStrategy(context.Background(), StrategyOpts{
+		ProjectDir: dir,
+		Strategy:   StrategyWorktree,
+		BranchName: "fry/leftover-test",
+		EpicName:   "Test",
+	})
+	require.NoError(t, err)
+	require.True(t, first.IsWorktree)
+
+	// Verify the first build's epic landed in the worktree.
+	wtEpic, err := os.ReadFile(filepath.Join(first.WorkDir, config.FryDir, "epic.md"))
+	require.NoError(t, err)
+	assert.Equal(t, "# Old epic\n", string(wtEpic))
+
+	// Simulate the first build crashing/exiting before reaching sprint
+	// loop. The worktree directory remains on disk; the main checkout's
+	// .fry/ gets a NEW prepare run with a fresh epic.md.
+	require.NoError(t, os.WriteFile(filepath.Join(fryDir, "epic.md"), []byte("# NEW epic\n"), 0o644))
+	// Plant a stale lock to mimic the orphan that triggered Bug 8.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, config.LockFile), []byte("99999\n"), 0o644))
+
+	// Now call SetupStrategy a second time with the same branch/epic.
+	// Before Bug 10's fix this would fail with "worktree at <path>
+	// already exists; remove it with: git worktree remove ...".
+	second, err := SetupStrategy(context.Background(), StrategyOpts{
+		ProjectDir: dir,
+		Strategy:   StrategyWorktree,
+		BranchName: "fry/leftover-test",
+		EpicName:   "Test",
+	})
+	require.NoError(t, err, "fry must reuse leftover worktrees transparently")
+	require.True(t, second.IsWorktree)
+	assert.Equal(t, first.WorkDir, second.WorkDir,
+		"reuse should land in the same worktree directory")
+
+	// The NEW epic.md must have been re-seeded into the existing worktree.
+	wtEpic, err = os.ReadFile(filepath.Join(second.WorkDir, config.FryDir, "epic.md"))
+	require.NoError(t, err)
+	assert.Equal(t, "# NEW epic\n", string(wtEpic),
+		"the existing worktree should be re-seeded with the latest .fry/")
+
+	// The leftover .fry.lock must NOT have been carried into the worktree.
+	_, err = os.Stat(filepath.Join(second.WorkDir, config.LockFile))
+	assert.True(t, os.IsNotExist(err),
+		"reused worktree must not contain the parent process's stale lock — got err: %v", err)
+
+	require.NoError(t, second.Cleanup())
 }
 
 func TestSetupStrategy_Worktree_NoGitRepo(t *testing.T) {
