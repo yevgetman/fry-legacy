@@ -332,3 +332,109 @@ func TestEnsureDockerUp_ContextCancelled(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, context.Canceled)
 }
+
+func TestEnsureDockerUp_SurfacesPortConflictStderr(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte("services:\n"), 0o644))
+
+	callCount := 0
+	deps := dockerDeps{
+		lookPath: func(file string) (string, error) {
+			if file == "docker" {
+				return "/usr/bin/docker", nil
+			}
+			return "", errors.New("not found")
+		},
+		execCommandContext: func(_ context.Context, _ string, args ...string) *exec.Cmd {
+			callCount++
+			switch callCount {
+			case 1: // detectComposeCommand: docker compose version
+				return exec.Command("bash", "-c", "exit 0")
+			case 2: // ps: nothing running yet
+				return exec.Command("bash", "-c", "exit 0")
+			default: // up -d: simulate the real port-conflict stderr
+				return exec.Command("bash", "-c",
+					`echo "Error response from daemon: driver failed programming external connectivity on endpoint app: Bind for 0.0.0.0:5432 failed: port is already allocated" >&2; exit 1`)
+			}
+		},
+		sleep: func(d time.Duration) {},
+		now:   time.Now,
+	}
+
+	err := ensureDockerUp(context.Background(), projectDir, "", 10, deps)
+	require.Error(t, err)
+	msg := err.Error()
+	assert.Contains(t, msg, "docker up:", "should retain the docker up: prefix")
+	assert.Contains(t, msg, "port is already allocated", "should surface docker's actual stderr")
+	assert.Contains(t, msg, "hint:", "should include the port-conflict remediation hint")
+	assert.Contains(t, msg, "docker ps", "hint should mention docker ps for diagnosis")
+}
+
+func TestEnsureDockerUp_SurfacesGenericStderrWithoutHint(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte("services:\n"), 0o644))
+
+	callCount := 0
+	deps := dockerDeps{
+		lookPath: func(file string) (string, error) {
+			if file == "docker" {
+				return "/usr/bin/docker", nil
+			}
+			return "", errors.New("not found")
+		},
+		execCommandContext: func(_ context.Context, _ string, args ...string) *exec.Cmd {
+			callCount++
+			switch callCount {
+			case 1:
+				return exec.Command("bash", "-c", "exit 0")
+			case 2:
+				return exec.Command("bash", "-c", "exit 0")
+			default:
+				return exec.Command("bash", "-c",
+					`echo "Error response from daemon: pull access denied for nonexistent/image" >&2; exit 1`)
+			}
+		},
+		sleep: func(d time.Duration) {},
+		now:   time.Now,
+	}
+
+	err := ensureDockerUp(context.Background(), projectDir, "", 10, deps)
+	require.Error(t, err)
+	msg := err.Error()
+	assert.Contains(t, msg, "pull access denied", "should surface docker's actual stderr")
+	assert.NotContains(t, msg, "hint:", "no port-conflict hint for non-port errors")
+}
+
+func TestPortConflictHint(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name   string
+		stderr string
+		want   bool
+	}{
+		{"port already allocated", "Bind for 0.0.0.0:5432 failed: port is already allocated", true},
+		{"address already in use", "listen tcp 0.0.0.0:6379: bind: address already in use", true},
+		{"ports are not available", "Ports are not available: exposing port TCP 0.0.0.0:5432 -> 0.0.0.0:0: listen tcp 0.0.0.0:5432: bind", true},
+		{"unrelated error", "no space left on device", false},
+		{"empty", "", false},
+		{"image not found", "pull access denied for nonexistent/image", false},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			hint := portConflictHint(tc.stderr)
+			if tc.want {
+				assert.NotEmpty(t, hint, "expected hint for %q", tc.stderr)
+				assert.Contains(t, hint, "docker ps")
+			} else {
+				assert.Empty(t, hint, "did not expect hint for %q", tc.stderr)
+			}
+		})
+	}
+}

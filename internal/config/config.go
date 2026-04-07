@@ -231,4 +231,26 @@ const (
 	CopilotStateSnapshotDebounceSec  = 10
 	CopilotMaxInterventionsPerClass  = 3
 	CopilotSnapshotEventTailMax      = 12
+
+	// CopilotFirstTickWarmupSec is the delay before the very first
+	// scheduler tick fires after Bootstrap completes. Short enough to
+	// catch sprint-1 setup failures (which usually happen seconds after
+	// bootstrap), long enough to let fry main get past the initial
+	// sprint preflight without immediately interrupting itself.
+	CopilotFirstTickWarmupSec = 60
+
+	// CopilotTickSubprocessTimeoutSec bounds how long an individual tick
+	// subprocess can run before fry main kills it. Each tick is supposed
+	// to be a single re-read + checklist walk + maybe one intervention,
+	// so a generous 15-minute cap catches runaway ticks without
+	// truncating legitimate intervention work.
+	CopilotTickSubprocessTimeoutSec = 900
+
+	// CopilotStopGraceSec is the maximum time fry main waits for an
+	// in-flight tick to finish during scheduler shutdown. After this,
+	// the tick subprocess is killed and the goroutine returns.
+	CopilotStopGraceSec = 5
+
+	// CopilotWakesDir holds per-tick result logs (one subdir per wake).
+	CopilotWakesDir = ".fry/copilot/wakes"
 )

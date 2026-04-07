@@ -84,16 +84,36 @@ func TestRenderBootstrapPromptIncludesOrphanCheck(t *testing.T) {
 	require.NoError(t, err)
 
 	// Step 0 of the tick checklist must instruct the agent to detect
-	// orphan status (manifest absent OR session_id mismatch) and call
-	// CronDelete to self-prune.
+	// orphan status (manifest absent OR session_id mismatch).
 	assert.Contains(t, prompt, "ORPHAN CHECK")
 	assert.Contains(t, prompt, "manifest.json does not exist")
-	assert.Contains(t, prompt, "session_id field is NOT")
-	assert.Contains(t, prompt, "CronDelete")
-	assert.Contains(t, prompt, "Self-prune")
-	// The agent must be told to remember its own cron ID at bootstrap.
-	assert.Contains(t, prompt, "REMEMBER YOUR CRON ID")
+	assert.Contains(t, prompt, "session_id field")
+	assert.Contains(t, prompt, "Orphaned")
+	// The session ID itself must be substituted into the prompt so the
+	// agent can compare against the live manifest.
 	assert.Contains(t, prompt, data.SessionID)
+}
+
+func TestRenderBootstrapPromptDoesNotInstructAgentToInstallCron(t *testing.T) {
+	t.Parallel()
+
+	prompt, err := RenderBootstrapPrompt(defaultBootstrapData())
+	require.NoError(t, err)
+
+	// fry main owns the schedule now via TickScheduler. The agent must
+	// NOT call CronCreate at all — doing so would create a parallel
+	// cron that fights with the fry-managed loop.
+	assert.NotContains(t, prompt, "CronCreate")
+	assert.NotContains(t, prompt, "Install a recurring schedule")
+	assert.NotContains(t, prompt, "Capture the cron ID returned")
+	// fry main is the scheduler, explained in plain English. Match a
+	// substring that doesn't span a line break.
+	assert.Contains(t, prompt, "fry main owns",
+		"prompt should explain who owns the wake schedule")
+	assert.Contains(t, prompt, "claude --resume",
+		"prompt should explain how fry main spawns each tick")
+	assert.Contains(t, prompt, "scheduler=fry-main",
+		"the bootstrap events.txt line should mark the scheduler source")
 }
 
 func TestRenderBootstrapPromptIncludesAllInterventionProcedures(t *testing.T) {
@@ -146,7 +166,12 @@ func TestRenderBootstrapPromptDefaultsIntervalMinutes(t *testing.T) {
 	data.Interval = "15m"
 	prompt, err := RenderBootstrapPrompt(data)
 	require.NoError(t, err)
-	assert.Contains(t, prompt, "every 15 minutes")
+	// Match "15" plus "minutes" within a small window — they may be
+	// separated by a line break in the rendered prompt template.
+	assert.Contains(t, prompt, "every 15m, scheduler=fry-main",
+		"the bootstrap events.txt instruction should report the interval")
+	assert.Contains(t, prompt, "every 15",
+		"the schedule explanation should mention the resolved minutes")
 }
 
 func TestRenderBootstrapPromptCommitMessageTemplate(t *testing.T) {
