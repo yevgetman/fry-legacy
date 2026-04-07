@@ -76,7 +76,19 @@ func ensureDockerUp(ctx context.Context, projectDir string, readyCmd string, tim
 		return nil
 	}
 
-	if _, err := runCompose(ctx, projectDir, composeCmd+" up -d", deps); err != nil {
+	upOutput, err := runCompose(ctx, projectDir, composeCmd+" up -d", deps)
+	if err != nil {
+		// Surface the actual stderr from `docker compose up` so users see
+		// port conflicts, missing images, bad service definitions, etc.,
+		// instead of just "exit status 1". runCompose uses CombinedOutput,
+		// so upOutput already contains both stdout and stderr.
+		trimmed := strings.TrimSpace(upOutput)
+		if hint := portConflictHint(trimmed); hint != "" {
+			return fmt.Errorf("docker up: %w\n%s\n\n%s", err, trimmed, hint)
+		}
+		if trimmed != "" {
+			return fmt.Errorf("docker up: %w\n%s", err, trimmed)
+		}
 		return fmt.Errorf("docker up: %w", err)
 	}
 
@@ -182,4 +194,29 @@ func serviceStateBlocked(line string) bool {
 		strings.Contains(normalized, "dead") ||
 		strings.Contains(normalized, "created") ||
 		strings.Contains(normalized, "restarting")
+}
+
+// portConflictHint inspects docker compose's stderr for the well-known
+// "port already allocated" / "address already in use" / "bind: ..."
+// signatures and returns a user-friendly remediation suggestion. Returns
+// "" when no port-conflict pattern matches.
+//
+// This is fry's response to a recurring failure mode: a previous build's
+// docker stack is still running with the same host port mappings, and
+// the new build's `docker compose up -d` cannot bind. Without this hint
+// the user sees only "exit status 1" and has to manually re-run docker
+// compose up to discover the actual cause.
+func portConflictHint(stderr string) string {
+	low := strings.ToLower(stderr)
+	if !strings.Contains(low, "port is already allocated") &&
+		!strings.Contains(low, "address already in use") &&
+		!strings.Contains(low, "bind: address already in use") &&
+		!strings.Contains(low, "ports are not available") {
+		return ""
+	}
+	return "hint: another process or docker stack is holding one or more host ports this stack needs.\n" +
+		"      Common cause: a previous fry build's docker stack from a different worktree is still running.\n" +
+		"      Run `docker ps` to see what's holding the ports, then `docker compose stop` from the\n" +
+		"      directory of the conflicting stack to release them. After the ports are free, retry\n" +
+		"      this build with `fry run --continue`."
 }

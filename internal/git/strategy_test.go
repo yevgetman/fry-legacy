@@ -298,6 +298,45 @@ func TestSetupStrategy_Worktree(t *testing.T) {
 	require.NoError(t, setup.Cleanup())
 }
 
+func TestSetupStrategy_Worktree_LockFileNotCarried(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	require.NoError(t, InitGit(context.Background(), dir))
+
+	// Plant a live .fry/.fry.lock containing the running process PID,
+	// matching what fry main does at the start of a build before
+	// SetupStrategy runs and creates the worktree.
+	fryDir := filepath.Join(dir, config.FryDir)
+	require.NoError(t, os.MkdirAll(fryDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(fryDir, "epic.md"), []byte("# Epic\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, config.LockFile), []byte("99999\n"), 0o644))
+
+	setup, err := SetupStrategy(context.Background(), StrategyOpts{
+		ProjectDir: dir,
+		Strategy:   StrategyWorktree,
+		BranchName: "fry/wt-lock-test",
+		EpicName:   "Test",
+	})
+	require.NoError(t, err)
+
+	// The original .fry.lock should still be in the main checkout (the
+	// fry main process owns it).
+	_, err = os.Stat(filepath.Join(dir, config.LockFile))
+	assert.NoError(t, err, "original lock file should still exist in main checkout")
+
+	// The worktree's .fry/.fry.lock should NOT exist.
+	_, err = os.Stat(filepath.Join(setup.WorkDir, config.LockFile))
+	assert.True(t, os.IsNotExist(err),
+		"worktree should NOT have a copied .fry.lock — got err: %v", err)
+
+	// Other .fry/ files should still be copied normally.
+	_, err = os.Stat(filepath.Join(setup.WorkDir, config.FryDir, "epic.md"))
+	assert.NoError(t, err, "other .fry/ files should be copied")
+
+	require.NoError(t, setup.Cleanup())
+}
+
 func TestSetupStrategy_Worktree_NoGitRepo(t *testing.T) {
 	t.Parallel()
 

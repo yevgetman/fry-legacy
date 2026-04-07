@@ -810,6 +810,15 @@ var runCmd = &cobra.Command{
 					frlog.Log("  COPILOT: active session %s (engine=%s, interval=%s)",
 						bootstrapResult.Manifest.SessionID, copilotEngine, runCopilotInterval)
 				}
+				// Stop the fry-main-owned tick scheduler when fry main
+				// exits. The scheduler runs in a goroutine for the
+				// lifetime of the build; without this defer it would
+				// keep ticking past fry exit (until the goroutine is
+				// killed by the OS along with the process).
+				if bootstrapResult.Scheduler != nil {
+					sched := bootstrapResult.Scheduler
+					defer func() { sched.Stop() }()
+				}
 			}
 		}
 

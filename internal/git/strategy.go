@@ -124,6 +124,14 @@ func setupWorktree(ctx context.Context, projectDir, branchName, origBranch strin
 		if err := copyDirIfExists(filepath.Join(projectDir, config.PlansDir), filepath.Join(worktreeDir, config.PlansDir)); err != nil {
 			return nil, fmt.Errorf("copy plans/ to worktree: %w", err)
 		}
+
+		// The .fry/.fry.lock file is the live process lock for the running
+		// fry main process. It must NOT be carried into the worktree —
+		// otherwise the worktree gets a stale lock containing the parent's
+		// PID, which is never released because the deferred releaseLock()
+		// in run.go uses the original project path. The new worktree starts
+		// with no lock file; the build runs without a per-worktree lock.
+		_ = os.Remove(filepath.Join(worktreeDir, config.LockFile))
 	}
 
 	return &StrategySetup{
