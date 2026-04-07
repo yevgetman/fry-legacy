@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -312,6 +313,78 @@ func TestCopilotListInterventionsWithEntries(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out, "0001-fry-bug.md")
 	assert.Contains(t, out, "0002-artifact.md")
+}
+
+// ----- worktree redirect tests (Bug 9) -----
+
+func TestResolveCopilotProjectDir_NoWorktree(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	// No .fry/git-strategy.txt and no .fry-worktrees/ → return dir unchanged.
+	got := resolveCopilotProjectDir(dir)
+	assert.Equal(t, dir, got)
+}
+
+func TestResolveCopilotProjectDir_EmptyDir(t *testing.T) {
+	t.Parallel()
+	got := resolveCopilotProjectDir("")
+	assert.Equal(t, "", got)
+}
+
+func TestResolveCopilotProjectDir_FallbackScansWorktrees(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	// Plant a fake worktree under .fry-worktrees/wt1/ with a .fry/copilot/ dir.
+	wt := filepath.Join(dir, ".fry-worktrees", "wt1")
+	require.NoError(t, os.MkdirAll(filepath.Join(wt, ".fry", "copilot"), 0o755))
+
+	// No git strategy file. The fallback scan should find wt and return it.
+	got := resolveCopilotProjectDir(dir)
+	assert.Equal(t, wt, got)
+}
+
+func TestResolveCopilotProjectDir_FallbackPicksMostRecent(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	wt1 := filepath.Join(dir, ".fry-worktrees", "older")
+	wt2 := filepath.Join(dir, ".fry-worktrees", "newer")
+	require.NoError(t, os.MkdirAll(filepath.Join(wt1, ".fry", "copilot"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(wt2, ".fry", "copilot"), 0o755))
+
+	// Push wt1 mtime back so wt2 is unambiguously newer.
+	pastTime := time.Now().Add(-1 * time.Hour)
+	require.NoError(t, os.Chtimes(wt1, pastTime, pastTime))
+
+	got := resolveCopilotProjectDir(dir)
+	assert.Equal(t, wt2, got, "should pick the most recently modified worktree")
+}
+
+func TestResolveCopilotProjectDir_FallbackSkipsWorktreesWithoutCopilotDir(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	// One worktree with no copilot/ dir, one with.
+	wtBare := filepath.Join(dir, ".fry-worktrees", "bare")
+	wtCopilot := filepath.Join(dir, ".fry-worktrees", "has-copilot")
+	require.NoError(t, os.MkdirAll(filepath.Join(wtBare, ".fry"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(wtCopilot, ".fry", "copilot"), 0o755))
+
+	got := resolveCopilotProjectDir(dir)
+	assert.Equal(t, wtCopilot, got, "should skip worktrees without .fry/copilot/")
+}
+
+func TestResolveCopilotProjectDir_FallbackReturnsInputWhenNoWorktreesHaveCopilot(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	// .fry-worktrees/ exists but no copilot dirs inside.
+	wt := filepath.Join(dir, ".fry-worktrees", "no-copilot")
+	require.NoError(t, os.MkdirAll(filepath.Join(wt, ".fry"), 0o755))
+
+	got := resolveCopilotProjectDir(dir)
+	assert.Equal(t, dir, got, "should return input dir when no worktree has copilot state")
 }
 
 // ----- run flag plumbing tests -----
