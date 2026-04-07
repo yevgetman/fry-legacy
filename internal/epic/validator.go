@@ -35,6 +35,21 @@ func ValidateEpic(e *Epic) error {
 		return fmt.Errorf("@max_fail_percent must be between 0 and 100, got %d", e.MaxFailPercent)
 	}
 
+	// Reject negative numeric directives. They are otherwise silently coerced
+	// to defaults at use sites, masking typos in epic files.
+	if e.MaxHealAttempts < 0 {
+		return fmt.Errorf("@max_heal_attempts must be >= 0, got %d", e.MaxHealAttempts)
+	}
+	if e.MaxAuditIterations < 0 {
+		return fmt.Errorf("@max_audit_iterations must be >= 0, got %d", e.MaxAuditIterations)
+	}
+	if e.MaxDeviationScope < 0 {
+		return fmt.Errorf("@max_deviation_scope must be >= 0, got %d", e.MaxDeviationScope)
+	}
+	if e.DockerReadyTimeout < 0 {
+		return fmt.Errorf("@docker_ready_timeout must be >= 0, got %d", e.DockerReadyTimeout)
+	}
+
 	// Validate sprint count against effort level (if set)
 	if e.EffortLevel != "" {
 		maxSprints := e.EffortLevel.MaxSprintCount()

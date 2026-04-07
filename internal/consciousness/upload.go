@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/yevgetman/fry/internal/config"
+	"github.com/yevgetman/fry/internal/textutil"
 )
 
 // userAgent identifies Fry to Cloudflare so requests are not blocked by bot protection.
@@ -124,10 +125,7 @@ func uploadJSON(ctx context.Context, apiURL, apiToken string, payload any) (*Upl
 		return &UploadResult{OK: true, Duplicate: true}, nil
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		snippet := string(respBody)
-		if len(snippet) > 200 {
-			snippet = snippet[:200]
-		}
+		snippet := textutil.TruncateUTF8(string(respBody), 200)
 		return nil, fmt.Errorf("upload payload: HTTP %d: %s", resp.StatusCode, snippet)
 	}
 

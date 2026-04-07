@@ -487,11 +487,6 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 				return nil, fmt.Errorf("run audit loop: write fix prompt: %w", err)
 			}
 
-			// Snapshot modified files before the fix agent runs (safety net)
-			snapshotPaths, _ := git.ListModifiedFiles(ctx, opts.ProjectDir)
-			preFixSnapshot := git.SnapshotFiles(opts.ProjectDir, snapshotPaths)
-			_ = preFixSnapshot // kept for future rollback use
-
 			// Run fix agent
 			fixLogPath := filepath.Join(buildLogsDir,
 				fmt.Sprintf("sprint%d_auditfix_%d_%d_%s.log", opts.Sprint.Number, cycle, fixIter, time.Now().Format("20060102_150405")),

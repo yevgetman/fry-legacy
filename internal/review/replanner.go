@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -400,7 +401,7 @@ func parseSprintNumber(line string) int {
 	if len(matches) != 2 {
 		return 0
 	}
-	var n int
-	fmt.Sscanf(matches[1], "%d", &n)
+	// Regex guarantees matches[1] is digits, so Atoi cannot fail.
+	n, _ := strconv.Atoi(matches[1])
 	return n
 }

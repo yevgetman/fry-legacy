@@ -297,9 +297,18 @@ func collectBuildLogs(dir string) []logEntry {
 	}
 	sort.Strings(names)
 
+	// Bound each in-memory read so a runaway log file (engine looping on stdout
+	// can produce hundreds of MB) cannot OOM the host before the prompt-builder
+	// truncation runs. Read maxLogBytes+1 so the prompt builder can still detect
+	// "this was truncated" via len(content) > maxLogBytes.
 	var logs []logEntry
 	for _, name := range names {
-		data, err := os.ReadFile(filepath.Join(dir, name))
+		f, err := os.Open(filepath.Join(dir, name))
+		if err != nil {
+			continue
+		}
+		data, err := io.ReadAll(io.LimitReader(f, maxLogBytes+1))
+		_ = f.Close()
 		if err != nil {
 			continue
 		}

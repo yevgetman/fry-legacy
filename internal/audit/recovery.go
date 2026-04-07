@@ -386,6 +386,16 @@ func maxFindingSeverity(findings []Finding) string {
 	return maxSeverity
 }
 
+// synthesizeVerificationStatuses scans an unstructured agent transcript for
+// verification results and rebuilds a canonical "Issue: N / Status: ..." block
+// when one is missing. The parser is intentionally fail-soft: it returns ""
+// (so the caller can fall back to other recovery paths) any time it cannot
+// confidently match a status to every issue.
+//
+// Order requirement: each `**Issue:** N` line must precede the matching
+// `**Status:** ...` line. A status line that appears before its issue number
+// is silently dropped — when this happens the function will fail to find a
+// status for one of the issues and return "".
 func synthesizeVerificationStatuses(content string, issueCount int) string {
 	if issueCount <= 0 {
 		return ""

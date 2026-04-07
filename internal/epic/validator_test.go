@@ -138,6 +138,42 @@ func TestValidateEpic_TableDriven(t *testing.T) {
 			wantErr:     true,
 			errContains: "allows at most",
 		},
+		{
+			name: "negative max_heal_attempts",
+			epic: &Epic{
+				Sprints:         []Sprint{makeValidSprint(1)},
+				MaxHealAttempts: -1,
+			},
+			wantErr:     true,
+			errContains: "max_heal_attempts",
+		},
+		{
+			name: "negative max_audit_iterations",
+			epic: &Epic{
+				Sprints:            []Sprint{makeValidSprint(1)},
+				MaxAuditIterations: -2,
+			},
+			wantErr:     true,
+			errContains: "max_audit_iterations",
+		},
+		{
+			name: "negative max_deviation_scope",
+			epic: &Epic{
+				Sprints:           []Sprint{makeValidSprint(1)},
+				MaxDeviationScope: -3,
+			},
+			wantErr:     true,
+			errContains: "max_deviation_scope",
+		},
+		{
+			name: "negative docker_ready_timeout",
+			epic: &Epic{
+				Sprints:            []Sprint{makeValidSprint(1)},
+				DockerReadyTimeout: -10,
+			},
+			wantErr:     true,
+			errContains: "docker_ready_timeout",
+		},
 	}
 
 	for _, tc := range tests {
