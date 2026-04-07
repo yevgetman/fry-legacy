@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 type findingClassification struct {
@@ -42,6 +43,23 @@ type findingTargetRef struct {
 	Line int
 }
 
+// parseFindingTarget extracts a file path (and optional line number) from a
+// finding's Location field. Audit agents emit locations in many shapes:
+//
+//	apps/web/package.json
+//	apps/web/package.json:14
+//	.github/workflows/ci.yml:25-28
+//	src/util.go:42,55-60
+//	Sprint diff, apps/web entry (mode 160000)   ← descriptive prose, not a path
+//
+// The parser strips trailing line numbers and line ranges, then validates that
+// the residual looks like a real file path. If it does not (contains spaces,
+// parentheses, or commas — none of which appear in legitimate POSIX paths fry
+// would build against), the function returns an empty ref so callers don't try
+// to read a phantom file. The previous implementation only stripped a single
+// trailing integer, leaving `file.go:25-28` mangled and `Sprint diff,
+// apps/web entry (mode 160000)` accepted as a literal path — both of which
+// produced "cannot inline target file" warnings during the audit fix loop.
 func parseFindingTarget(location string) findingTargetRef {
 	location = strings.TrimSpace(location)
 	if location == "" {
@@ -51,24 +69,102 @@ func parseFindingTarget(location string) findingTargetRef {
 	parts := strings.Split(location, ":")
 	ref := findingTargetRef{}
 	end := len(parts)
-	if end > 0 {
-		if line, err := strconv.Atoi(parts[end-1]); err == nil {
-			ref.Line = line
-			end--
-		}
-	}
+
+	// Strip trailing line-number-like suffixes. Accepts plain integers (`25`),
+	// ranges (`25-28`), and comma-separated lists (`25,30-35`).
 	for end > 0 {
-		if _, err := strconv.Atoi(parts[end-1]); err == nil {
-			end--
-			continue
+		last := strings.TrimSpace(parts[end-1])
+		if !looksLikeLineRef(last) {
+			break
 		}
-		break
+		// Capture the first integer we see as the canonical Line, but only
+		// once — we don't want a deeper number to override a shallower one.
+		if ref.Line == 0 {
+			if n := firstInt(last); n > 0 {
+				ref.Line = n
+			}
+		}
+		end--
 	}
-	ref.Path = strings.TrimSpace(strings.Join(parts[:end], ":"))
-	if ref.Path != "" {
-		ref.Path = filepath.Clean(ref.Path)
+
+	path := strings.TrimSpace(strings.Join(parts[:end], ":"))
+	if path == "" {
+		return findingTargetRef{}
 	}
+	if !looksLikeFilePath(path) {
+		// Descriptive prose in the Location field. Skip — the fix prompt
+		// will still include the finding's description and recommended fix,
+		// just not an inlined file copy.
+		return findingTargetRef{}
+	}
+	ref.Path = filepath.Clean(path)
 	return ref
+}
+
+// looksLikeLineRef returns true if s is a single integer, a range like
+// "25-28" or "25–28" (en-dash), or a comma-separated list of either.
+func looksLikeLineRef(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, group := range strings.Split(s, ",") {
+		group = strings.TrimSpace(group)
+		if group == "" {
+			return false
+		}
+		// Normalize en-dash to hyphen for the dash-split.
+		group = strings.ReplaceAll(group, "\u2013", "-")
+		segments := strings.Split(group, "-")
+		if len(segments) > 2 {
+			return false
+		}
+		for _, seg := range segments {
+			seg = strings.TrimSpace(seg)
+			if seg == "" {
+				return false
+			}
+			if _, err := strconv.Atoi(seg); err != nil {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// firstInt returns the first integer parsed out of a line-ref string.
+// Returns 0 if no integer is present.
+func firstInt(s string) int {
+	s = strings.ReplaceAll(s, "\u2013", "-")
+	for _, group := range strings.Split(s, ",") {
+		group = strings.TrimSpace(group)
+		for _, seg := range strings.Split(group, "-") {
+			seg = strings.TrimSpace(seg)
+			if n, err := strconv.Atoi(seg); err == nil {
+				return n
+			}
+		}
+	}
+	return 0
+}
+
+// looksLikeFilePath returns true if s is plausibly a POSIX file path. It
+// rejects strings containing spaces, parentheses, or commas — characters
+// that don't appear in the kinds of paths fry builds against and reliably
+// distinguish prose ("Sprint diff, apps/web entry (mode 160000)") from real
+// targets (".github/workflows/ci.yml").
+func looksLikeFilePath(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r == '(', r == ')', r == ',', r == '"', r == '\'':
+			return false
+		case unicode.IsSpace(r):
+			return false
+		}
+	}
+	return true
 }
 
 func classifyFindings(known, current []Finding) findingClassification {

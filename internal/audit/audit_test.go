@@ -630,6 +630,66 @@ func TestDecorateFindings(t *testing.T) {
 	})
 }
 
+func TestParseFindingTarget(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		location string
+		wantPath string
+		wantLine int
+	}{
+		{"empty", "", "", 0},
+		{"bare path", "src/main.go", "src/main.go", 0},
+		{"path with line", "src/main.go:42", "src/main.go", 42},
+		{"path with line range", ".github/workflows/ci.yml:25-28", ".github/workflows/ci.yml", 25},
+		{"path with comma list", "src/util.go:42,55-60", "src/util.go", 42},
+		{"path with en-dash range", "src/util.go:25\u201328", "src/util.go", 25},
+		{"path with multiple colons (e.g. Windows-style not supported, but stable)", "package.json:14", "package.json", 14},
+		{"prose with spaces rejected", "Sprint diff, apps/web entry (mode 160000)", "", 0},
+		{"prose with parens rejected", "main(args)", "", 0},
+		{"prose with comma rejected", "foo, bar", "", 0},
+		{"path with quoted string rejected", `"src/x.go"`, "", 0},
+		{"trailing whitespace stripped", "  src/main.go:10  ", "src/main.go", 10},
+		{"path with deep nesting", "apps/api/src/modules/auth/auth.controller.ts:50-100", "apps/api/src/modules/auth/auth.controller.ts", 50},
+		{"line range with no path", ":25-28", "", 0},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ref := parseFindingTarget(tc.location)
+			assert.Equal(t, tc.wantPath, ref.Path, "path mismatch for %q", tc.location)
+			assert.Equal(t, tc.wantLine, ref.Line, "line mismatch for %q", tc.location)
+		})
+	}
+}
+
+func TestTargetFilesForFinding_RejectsPhantomPaths(t *testing.T) {
+	t.Parallel()
+
+	// Locations that look like prose, not file paths, should yield no
+	// target files — preventing the audit fix prompt from logging
+	// "cannot inline target file" warnings.
+	cases := []struct {
+		location string
+	}{
+		{"Sprint diff, apps/web entry (mode 160000)"},
+		{"shadcn style rename"},
+		{"toast → sonner substitution"},
+		{"general scaffolding observation"},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.location, func(t *testing.T) {
+			t.Parallel()
+			targets := targetFilesForFinding(Finding{Location: c.location})
+			assert.Nil(t, targets, "phantom location should produce no target files")
+		})
+	}
+}
+
 // --- effectiveOuterCycles tests ---
 
 func TestEffectiveOuterCycles(t *testing.T) {
