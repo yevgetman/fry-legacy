@@ -158,6 +158,56 @@ func TestRenderBootstrapPromptDefaultsNowISO(t *testing.T) {
 	assert.NotContains(t, prompt, "{{.NowISO}}")
 }
 
+func TestRenderBootstrapPromptIncludesTimeHandlingSection(t *testing.T) {
+	t.Parallel()
+
+	prompt, err := RenderBootstrapPrompt(defaultBootstrapData())
+	require.NoError(t, err)
+
+	// The Time handling section was added to fix Bug 14: the agent was
+	// reusing the bootstrap-time {{.NowISO}} value for every wake's
+	// events.txt entries, producing timestamps that drifted further from
+	// reality each tick. The new section explicitly tells the agent to
+	// use the wake-message Current UTC time instead.
+	assert.Contains(t, prompt, "Time handling",
+		"prompt must include the Time handling section")
+	assert.Contains(t, prompt, "Current UTC time",
+		"prompt must reference the wake-message Current UTC time field")
+	assert.Contains(t, prompt, "<UTC NOW>",
+		"prompt must use the <UTC NOW> placeholder so the agent knows what to substitute")
+	assert.Contains(t, prompt, "frozen at session-start time",
+		"prompt must explain WHY the bootstrap timestamp is unsafe to reuse")
+}
+
+func TestRenderBootstrapPromptUsesUTCNowPlaceholderForWakeEntries(t *testing.T) {
+	t.Parallel()
+
+	prompt, err := RenderBootstrapPrompt(defaultBootstrapData())
+	require.NoError(t, err)
+
+	// The bootstrap event line at the top of the One-Time Bootstrap
+	// section is the ONLY entry that should use the rendered NowISO
+	// value (it fires once at bootstrap time). Every other entry — wake
+	// notes, orphan exit, intervention commits, restart logs, final
+	// summary — must use the <UTC NOW> placeholder so the agent
+	// substitutes the wake-message time.
+	wakeTimeMarkers := []string{
+		"<UTC NOW>  Orphaned",
+		"<UTC NOW>  wake #N: watched",
+		"build {{.RunID}}", // commit message frame keeps the run ID
+		"<UTC NOW>  [intervention",
+		"<UTC NOW>  build restarted with new binary",
+		"<UTC NOW>  Copilot exiting cleanly",
+	}
+	for _, marker := range wakeTimeMarkers {
+		// {{.RunID}} would have been substituted by the template engine,
+		// so check the substituted form for that one.
+		expected := strings.ReplaceAll(marker, "{{.RunID}}", "run-test")
+		assert.Contains(t, prompt, expected,
+			"wake-time entry should use <UTC NOW> placeholder, not bootstrap time")
+	}
+}
+
 func TestRenderBootstrapPromptDefaultsIntervalMinutes(t *testing.T) {
 	t.Parallel()
 

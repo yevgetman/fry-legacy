@@ -55,21 +55,32 @@ var copilotStatusCmd = &cobra.Command{
 			return cobraExitWithCode(1)
 		}
 
+		// Refresh the state snapshot before reading so the user always
+		// sees current build state. The snapshot writer is debounced
+		// elsewhere (10s window), but `fry copilot status` should never
+		// surface stale data — Force bypasses the debounce. Errors are
+		// non-fatal: an unwritable .fry/copilot/ directory just means
+		// the existing snapshot will be read, not failure.
+		_ = copilot.ForceWriteStateSnapshot(dir)
+
 		snapshot, _ := copilot.ReadStateSnapshot(dir)
 		busy := copilot.IsBusy(dir)
 		cronID := copilot.ReadCronIDFile(dir)
 		events, _ := copilot.ReadEvents(dir)
 		counts := copilot.CountEventsByType(events)
+		hasWakeEvents := counts[observer.EventCopilotWakeStart] > 0
 
-		// Liveness derives from build PID + cron ID. The bootstrap
-		// subprocess is short-lived (claude -p exits after running the
-		// bootstrap prompt) — its PID is NOT a copilot-alive indicator.
-		// The cron is what keeps the session responsive across wakes.
+		// Liveness derives from build PID + at least one wake event.
+		// The bootstrap subprocess is short-lived (claude -p exits after
+		// running the bootstrap prompt) — its PID is NOT a copilot-alive
+		// indicator. The in-process TickScheduler owned by fry main is
+		// what keeps the session responsive across wakes; its presence
+		// is signalled by wake events in events.jsonl.
 		buildAlive := manifest.BuildPID > 0 && processAlive(manifest.BuildPID)
 
 		if jsonOut {
 			return json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]any{
-				"status":       statusVerbFromState(cronID, buildAlive),
+				"status":       statusVerbFromState(buildAlive, hasWakeEvents),
 				"manifest":     manifest,
 				"snapshot":     snapshot,
 				"busy":         busy,
@@ -80,7 +91,7 @@ var copilotStatusCmd = &cobra.Command{
 		}
 
 		out := cmd.OutOrStdout()
-		fmt.Fprintf(out, "Copilot status: %s\n", strings.ToUpper(statusVerbFromState(cronID, buildAlive)))
+		fmt.Fprintf(out, "Copilot status: %s\n", strings.ToUpper(statusVerbFromState(buildAlive, hasWakeEvents)))
 		fmt.Fprintf(out, "  Engine:              %s", manifest.Engine)
 		if manifest.Model != "" {
 			fmt.Fprintf(out, " (%s)", manifest.Model)
@@ -123,9 +134,11 @@ var copilotStatusCmd = &cobra.Command{
 			fmt.Fprintf(out, "                       %s --resume %s\n", manifest.Engine, manifest.SessionID)
 		}
 
-		// Exit non-zero on stale state for scripting: cron file present but
-		// build process is dead.
-		if cronID != "" && !buildAlive {
+		// Exit non-zero on stale state for scripting: at least one wake
+		// event has been recorded, but the build process has since died.
+		// The wake event signals the scheduler was once running — the
+		// dead PID means it isn't anymore.
+		if hasWakeEvents && !buildAlive {
 			return cobraExitWithCode(2)
 		}
 		return nil
@@ -519,18 +532,28 @@ func boolYesNo(b bool) string {
 
 // statusVerbFromState returns the human-readable session state.
 //
-//   - "absent"  : no cron has been installed and no build is alive
-//   - "starting": no cron yet but the build is alive (bootstrap in flight)
-//   - "stale"   : cron file exists but the build process has died
-//   - "active"  : cron installed and build alive
-func statusVerbFromState(cronID string, buildAlive bool) string {
+//   - "absent"  : the build is not alive AND no wakes have ever fired
+//   - "starting": the build is alive but the in-process scheduler has
+//     not produced its first wake event yet (bootstrap in flight)
+//   - "stale"   : at least one wake fired previously, but the build PID
+//     is now dead
+//   - "active"  : the build is alive and the in-process scheduler has
+//     produced at least one wake event
+//
+// Note: cron ID is no longer part of state determination. The original
+// design relied on Claude Code's CronCreate (job ID written to disk) as
+// the liveness signal. The current architecture uses an in-process
+// TickScheduler owned by fry main, which never writes the cron file.
+// Wake event presence in events.jsonl is the authoritative signal that
+// the scheduler is firing.
+func statusVerbFromState(buildAlive bool, hasWakeEvents bool) string {
 	switch {
-	case cronID == "" && !buildAlive:
+	case !buildAlive && !hasWakeEvents:
 		return "absent"
-	case cronID == "":
-		return "starting"
 	case !buildAlive:
 		return "stale"
+	case !hasWakeEvents:
+		return "starting"
 	default:
 		return "active"
 	}
