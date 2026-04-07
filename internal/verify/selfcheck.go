@@ -180,3 +180,70 @@ func validateCmdTarget(c Check, result *HarnessCheckResult) {
 		})
 	}
 }
+
+// AutoEscapeLiteralParens rewrites a grep -E pattern so that parentheses
+// that appear in "function call" position (e.g. `default(`, `Array(5)`,
+// `min(8)`) are escaped, while parentheses that look like real regex
+// groups (e.g. `^(import|export)`) are left alone. AI agents routinely
+// emit verification patterns like `@id @default(uuid())` or `min(8)`
+// where they meant the parens literally — but `grep -E` interprets them
+// as grouping metacharacters and the check spuriously fails forever,
+// blocking sprints in alignment loops.
+//
+// The transformation is per-paren, not all-or-nothing: a pattern that
+// mixes legit regex groups with literal function-call parens like
+// `^(model|enum)\s+\w+@id @default(uuid())` is rewritten to
+// `^(model|enum)\s+\w+@id @default\(uuid\(\)\)` — only the function-call
+// parens are escaped, the alternation group is preserved.
+//
+// The function uses a balanced-paren stack so each `(` and its matching
+// `)` are classified together. Already-escaped `\(` and `\)` are passed
+// through untouched.
+func AutoEscapeLiteralParens(pattern string) string {
+	if pattern == "" || !strings.ContainsAny(pattern, "()") {
+		return pattern
+	}
+	bytes := []byte(pattern)
+	out := make([]byte, 0, len(bytes)+8)
+	type openParen struct {
+		literal bool
+	}
+	var stack []openParen
+
+	for i := 0; i < len(bytes); i++ {
+		c := bytes[i]
+		if c == '\\' && i+1 < len(bytes) {
+			// Escaped pair — copy both bytes verbatim and skip ahead.
+			out = append(out, '\\', bytes[i+1])
+			i++
+			continue
+		}
+		switch c {
+		case '(':
+			isLiteral := i > 0 && isWordByte(bytes[i-1])
+			stack = append(stack, openParen{literal: isLiteral})
+			if isLiteral {
+				out = append(out, '\\', '(')
+			} else {
+				out = append(out, '(')
+			}
+		case ')':
+			if len(stack) > 0 {
+				top := stack[len(stack)-1]
+				stack = stack[:len(stack)-1]
+				if top.literal {
+					out = append(out, '\\', ')')
+					continue
+				}
+			}
+			out = append(out, ')')
+		default:
+			out = append(out, c)
+		}
+	}
+	return string(out)
+}
+
+func isWordByte(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_'
+}

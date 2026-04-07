@@ -218,3 +218,110 @@ func TestValidateHarness_UnescapedParensInPattern(t *testing.T) {
 		assert.True(t, found, "expected unescaped_regex_metachar for Array(5)")
 	})
 }
+
+func TestAutoEscapeLiteralParens(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		// === The cases that bit meetingly3 sprint 2 ===
+		{
+			name: "default uuid (the literal sprint 2 failure)",
+			in:   `@id @default(uuid())`,
+			want: `@id @default\(uuid\(\)\)`,
+		},
+		{
+			name: "Public decorator",
+			in:   `@Public()`,
+			want: `@Public\(\)`,
+		},
+		{
+			name: "z.string().min(8 (unbalanced is OK)",
+			in:   `z.string().min(8`,
+			want: `z.string\(\).min\(8`,
+		},
+		{
+			name: "Array literal",
+			in:   `Array(5)`,
+			want: `Array\(5\)`,
+		},
+
+		// === Real regex groups must be preserved ===
+		{
+			name: "alternation group preserved",
+			in:   `^(import|export)`,
+			want: `^(import|export)`,
+		},
+		{
+			name: "anchored group preserved",
+			in:   `^(model|enum)\s+\w+`,
+			want: `^(model|enum)\s+\w+`,
+		},
+		{
+			name: "regex group nested in literal",
+			in:   `default(^(foo|bar)$)`,
+			want: `default\(^(foo|bar)$\)`,
+		},
+		{
+			name: "literal nested in regex group",
+			in:   `^(default(uuid))$`,
+			want: `^(default\(uuid\))$`,
+		},
+
+		// === Already-escaped patterns are passed through ===
+		{
+			name: "already escaped",
+			in:   `@id @default\(uuid\(\)\)`,
+			want: `@id @default\(uuid\(\)\)`,
+		},
+		{
+			name: "partial pre-escape preserved",
+			in:   `min\(8\)`,
+			want: `min\(8\)`,
+		},
+
+		// === Edge cases ===
+		{
+			name: "empty",
+			in:   ``,
+			want: ``,
+		},
+		{
+			name: "no parens at all",
+			in:   `^model\s+\w+$`,
+			want: `^model\s+\w+$`,
+		},
+		{
+			name: "open paren at start (regex group, not literal)",
+			in:   `(foo|bar)`,
+			want: `(foo|bar)`,
+		},
+		{
+			name: "preceded by digit (still function-call style)",
+			in:   `route42(arg)`,
+			want: `route42\(arg\)`,
+		},
+		{
+			name: "preceded by underscore (function-call style)",
+			in:   `do_thing(x)`,
+			want: `do_thing\(x\)`,
+		},
+		{
+			name: "trailing close paren without matching open",
+			in:   `foo)`,
+			want: `foo)`,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := AutoEscapeLiteralParens(tc.in)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}

@@ -803,6 +803,44 @@ func TestRunChecksFileContainsBREAlternation(t *testing.T) {
 	assert.True(t, results[2].Passed, "plain pattern should match")
 }
 
+// Regression test for the meetingly3 sprint 2 stuck-alignment scenario:
+// `@check_file_contains schema.prisma "@id @default(uuid())"` against a real
+// schema file. Without auto-escape, grep -E parses the parens as group
+// metacharacters and the pattern silently fails to match the literal text
+// in the file, even though the file contains the exact substring 18 times.
+func TestRunChecksFileContains_AutoEscapeFunctionCallParens(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	schema := `
+model Organization {
+  id String @id @default(uuid()) @db.Uuid
+  name String
+}
+
+model User {
+  id String @id @default(uuid()) @db.Uuid
+}
+`
+	require.NoError(t, os.WriteFile(filepath.Join(projectDir, "schema.prisma"), []byte(schema), 0o644))
+
+	checks := []Check{
+		// The literal pattern that bit meetingly3.
+		{Sprint: 1, Type: CheckFileContains, Path: "schema.prisma", Pattern: `@id @default(uuid())`},
+		// Other common function-call literals.
+		{Sprint: 1, Type: CheckFileContains, Path: "schema.prisma", Pattern: `@db.Uuid`},
+		// A real regex group must still work.
+		{Sprint: 1, Type: CheckFileContains, Path: "schema.prisma", Pattern: `^model\s+(Organization|User)`},
+	}
+
+	results, passCount, _ := RunChecks(context.Background(), checks, 1, projectDir)
+	require.Len(t, results, 3)
+	assert.Equal(t, 3, passCount, "all three checks must pass; auto-escape lets the function-call literal match")
+	assert.True(t, results[0].Passed, "function-call literal should match after auto-escape")
+	assert.True(t, results[1].Passed, "@db.Uuid should match")
+	assert.True(t, results[2].Passed, "real regex group should still work alongside auto-escape")
+}
+
 func writeVerificationFile(t *testing.T, contents string) string {
 	t.Helper()
 

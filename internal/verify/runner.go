@@ -62,6 +62,13 @@ func runCheck(ctx context.Context, check Check, projectDir string) CheckResult {
 		// LLMs frequently generate \| for alternation, which in ERE means
 		// a literal pipe character rather than OR.
 		pattern := strings.ReplaceAll(check.Pattern, `\|`, "|")
+		// Auto-escape literal "function call" parens like `default(uuid())`
+		// or `min(8)` so that grep -E doesn't interpret them as regex
+		// grouping metacharacters and silently fail to match real text.
+		// AI agents emit these patterns constantly and they're the
+		// number-one cause of false-positive sanity check failures that
+		// trigger pointless alignment loops.
+		pattern = AutoEscapeLiteralParens(pattern)
 		cmd := exec.CommandContext(checkCtx, "bash", "-c", fmt.Sprintf("grep -qE -- %s %s", textutil.ShellQuote(pattern), textutil.ShellQuote(targetPath)))
 		var stderrBuf cappedBuffer
 		cmd.Stderr = &stderrBuf
@@ -103,7 +110,9 @@ func runCheck(ctx context.Context, check Check, projectDir string) CheckResult {
 		if trimmed == "" {
 			trimmed = "\n"
 		}
-		grep := exec.CommandContext(checkCtx, "bash", "-c", fmt.Sprintf("grep -qE -- %s", textutil.ShellQuote(check.Pattern)))
+		// Same auto-escape rationale as CheckFileContains.
+		cmdPattern := AutoEscapeLiteralParens(strings.ReplaceAll(check.Pattern, `\|`, "|"))
+		grep := exec.CommandContext(checkCtx, "bash", "-c", fmt.Sprintf("grep -qE -- %s", textutil.ShellQuote(cmdPattern)))
 		grep.Stdin = strings.NewReader(trimmed)
 		result.Passed = grep.Run() == nil
 	case CheckTest:
