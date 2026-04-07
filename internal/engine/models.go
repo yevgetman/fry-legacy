@@ -47,6 +47,7 @@ const (
 	SessionExperienceSummary SessionType = "experience-summary"
 	SessionCodebaseScan      SessionType = "codebase-scan"
 	SessionCodebaseMemory    SessionType = "codebase-memory"
+	SessionCopilot           SessionType = "copilot"
 )
 
 // Tier-to-model mapping tables.
@@ -255,6 +256,15 @@ func TierForSession(engineName, effort string, session SessionType) ModelTier {
 		return TierStandard
 
 	case SessionCodebaseMemory:
+		return TierStandard
+
+	case SessionCopilot:
+		// Copilot is a high-stakes intervention session: it can edit fry
+		// source, run tests, commit, push, and restart builds. Use a strong
+		// model at high/max effort, standard at lower effort levels.
+		if e == "high" || e == "max" {
+			return TierFrontier
+		}
 		return TierStandard
 
 	default:

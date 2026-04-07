@@ -50,6 +50,29 @@ const (
 	EventTeamShutdown     EventType = "team_shutdown"
 	EventTeamMergeReady   EventType = "team_merge_ready"
 	EventTeamComplete     EventType = "team_complete"
+
+	// Copilot events — emitted by the `fry run --copilot` parallel session.
+	// These are added to the canonical observer event taxonomy so that
+	// `fry monitor` and `fry events --follow` render them natively.
+	EventCopilotBootstrap          EventType = "copilot_bootstrap"
+	EventCopilotCronInstalled      EventType = "copilot_cron_installed"
+	EventCopilotCronRemoved        EventType = "copilot_cron_removed"
+	EventCopilotWakeStart          EventType = "copilot_wake_start"
+	EventCopilotWakeEnd            EventType = "copilot_wake_end"
+	EventCopilotWakeSkipped        EventType = "copilot_wake_skipped"
+	EventCopilotAnomalyDetected    EventType = "copilot_anomaly_detected"
+	EventCopilotInterventionStart  EventType = "copilot_intervention_started"
+	EventCopilotInterventionDone   EventType = "copilot_intervention_completed"
+	EventCopilotInterventionFailed EventType = "copilot_intervention_failed"
+	EventCopilotFryBugFix          EventType = "copilot_fry_bug_fix"
+	EventCopilotMakeInstall        EventType = "copilot_make_install"
+	EventCopilotGitPush            EventType = "copilot_git_push"
+	EventCopilotArtifactRemediate  EventType = "copilot_artifact_remediate"
+	EventCopilotBuildRestart       EventType = "copilot_build_restart"
+	EventCopilotFinalSummary       EventType = "copilot_final_summary"
+	EventCopilotEscalation         EventType = "copilot_escalation"
+	EventCopilotUserMessage        EventType = "copilot_user_message"
+	EventCopilotPanic              EventType = "copilot_panic"
 )
 
 // Event represents a single timestamped build event in the observer stream.

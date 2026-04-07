@@ -205,4 +205,30 @@ const (
 	MonitorDefaultLogTailLines = 20 // lines to tail from active build log
 	MonitorIdleSlowdownTicks   = 10 // unchanged ticks before slowing to idle interval
 	MonitorSlowIntervalSec     = 5  // idle polling interval in seconds
+
+	// Copilot constants — `fry run --copilot` launches a parallel
+	// agent session that monitors the build via cron-driven wakes and
+	// intervenes to fix canonical fry bugs or unstick build artifacts.
+	CopilotDir                       = ".fry/copilot"
+	CopilotManifestFile              = ".fry/copilot/manifest.json"
+	CopilotSessionIDFile             = ".fry/copilot/session-id.txt"
+	CopilotBootstrapPIDFile          = ".fry/copilot/bootstrap.pid"
+	CopilotBootstrapLogFile          = ".fry/copilot/bootstrap.log"
+	CopilotCronIDFile                = ".fry/copilot/cron.id"
+	CopilotTickLockFile              = ".fry/copilot/tick.lock"
+	CopilotStateSnapshotFile         = ".fry/copilot/state-snapshot.json"
+	CopilotBootstrapPromptFile       = ".fry/copilot/prompts/bootstrap.md"
+	CopilotSummaryPromptFile         = ".fry/copilot/prompts/summary.md"
+	CopilotEventsTextFile            = ".fry/copilot/events.txt"
+	CopilotEventsJSONLFile           = ".fry/copilot/events.jsonl"
+	CopilotInterventionsDir          = ".fry/copilot/interventions"
+	CopilotFinalSummaryFile          = ".fry/copilot/final-summary.md"
+	CopilotArchiveDir                = ".fry/copilot/archive"
+	CopilotStopRequestedFile         = ".fry/copilot/stop-requested"
+	CopilotDefaultIntervalMinutes    = 10
+	CopilotMinIntervalSeconds        = 60   // 1m floor
+	CopilotMaxIntervalSeconds        = 3600 // 1h ceiling
+	CopilotStateSnapshotDebounceSec  = 10
+	CopilotMaxInterventionsPerClass  = 3
+	CopilotSnapshotEventTailMax      = 12
 )

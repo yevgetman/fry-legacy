@@ -126,6 +126,7 @@ Each sprint runs as an iterative loop where the AI agent gets a prompt, does wor
 - **MCP config passthrough** -- `--mcp-config` flag and `@mcp_config` directive pass MCP server configuration to Claude Code for extended agent capabilities (LSP, AST tools, etc.); see [Engines](docs/engines.md#mcp-server-configuration)
 - **Dynamic sprint review** -- optional mid-build review with replanning
 - **Observer** -- metacognitive layer that watches builds, notices patterns, writes durable checkpoints, preserves scratchpad continuity on resume, and quarantines malformed outputs instead of promoting raw transcripts. Identity is compiled into the binary and read-only during builds. Non-fatal; effort-level gated. See [Observer](docs/observer.md).
+- **Copilot** -- parallel persistent agent session that monitors a build via cron-driven wakes (default every 10m) and intervenes when something goes wrong: edits the fry source tree to fix canonical bugs (test → make install → commit → push → restart), or remediates broken build artifacts to unstick the build. Auto-enables at `--effort=max`, opt-in elsewhere via `--copilot`. Attach with `fry copilot attach`. See [Copilot](docs/copilot.md).
 - **Experience upload** -- telemetry sends anonymized checkpoint summaries and session lifecycle events to the central consciousness API (enabled by default; `fry init` creates `~/.fry/settings.json`). Uploads are queued locally and retried automatically; `fry status --consciousness` reports local checkpoint and upload health. Control via `--telemetry` / `--no-telemetry`, `FRY_TELEMETRY` env var, or `~/.fry/settings.json`. See [Consciousness](docs/consciousness.md).
 - **Sprint preflight** -- before each sprint, Fry infers environment prerequisites (env vars, Docker refs, external tools) from the sprint prompt text and warns about missing dependencies
 - **Harness self-validation** -- before the sprint loop starts, Fry validates sanity check file targets (absolute paths, path traversal, missing parent directories, empty targets) and reports issues so broken checks don't silently pass
@@ -313,6 +314,7 @@ See [Commands](docs/commands.md) for complete flag and argument reference.
 | [Self-Improvement](docs/self-improvement.md) | Automated self-improvement pipeline: roadmap, orchestrator, planning, build, alignment |
 | [Build Monitoring](docs/monitor.md) | Real-time monitoring: enriched event stream, dashboard, log tail, NDJSON output |
 | [Observer](docs/observer.md) | Metacognitive layer: event stream, identity, wake-ups, effort-level gating |
+| [Copilot](docs/copilot.md) | Parallel persistent agent that monitors a build and intervenes (fry-source bug fixes, artifact remediation, build restarts) |
 | [Consciousness](docs/consciousness.md) | Experience synthesis and identity pipeline |
 | [Codebase Awareness](docs/codebase-awareness.md) | Existing codebase detection, scanning, memories, and pipeline integration |
 | [Agent Foundation](docs/agent.md) | Agent invocation, artifact schema, system prompt generation |
