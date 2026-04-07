@@ -300,6 +300,13 @@ Messages you send become part of the conversation. The copilot logs them under "
 | `attach` exits with code 3 | tick.lock is held by a live process | wait ~30s and retry, or use `--print-only` |
 | No commits appearing on remote | push was rejected (non-fast-forward) | check intervention reports; copilot logs push failures explicitly |
 | Build restarted but old behavior persists | `make install` did not actually replace the binary on PATH | run `which fry` and verify; the copilot logs this as a sanity check |
+| `fry clean` left a leftover cron / phantom session ticking | The copilot's cron lives in Claude Code's runtime, not in `.fry/`. `fry clean` archives the project dir but cannot cancel external crons. | The orphan agent should self-prune on its next wake — Tick Checklist step 0 detects the missing manifest and calls CronDelete automatically. If it persists, resume the orphan with `claude --resume <session-id>` (the session ID is in the archived `.fry-archive/.../copilot/session-id.txt`) and ask it to delete its cron. |
+| `fry run --copilot` prints `fry: warning: leftover copilot cron ...` at startup | A previous build's copilot session is still scheduled in Claude Code | Same as above — the orphan should self-prune on its next wake. The new build's copilot is unaffected. |
+
+## Limitations
+
+- **`fry clean` cannot cancel copilot crons.** Crons installed by `CronCreate` live in Claude Code's session storage, outside the project dir. fry archives `.fry/copilot/` but the cron continues to fire on its schedule until the next tick, at which point the agent's Tick Checklist step 0 detects the missing manifest and self-prunes via `CronDelete`. fry surfaces a warning during `fry clean` and at the next `fry run --copilot` if a leftover cron is detected, so users know what to expect.
+- **Manifest `cron_id` is hydrated from disk on read.** fry main writes the manifest before the agent installs the cron, so the on-disk manifest's `cron_id` field is always empty. `ReadManifest()` populates it from `.fry/copilot/cron.id` on every read so callers see a consistent view.
 
 ## Events
 

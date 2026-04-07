@@ -126,6 +126,13 @@ func WriteManifest(projectDir string, m *Manifest) error {
 // ReadManifest reads .fry/copilot/manifest.json from projectDir. Returns
 // (nil, nil) if the file does not exist — callers should treat that as
 // "no copilot configured for this build."
+//
+// On every successful read, the CronID field is hydrated from
+// .fry/copilot/cron.id on disk (if present). fry main writes the manifest
+// BEFORE the agent installs its cron, so the on-disk manifest always
+// serializes CronID as "". The cron.id file (written by the agent
+// post-install) is the source of truth — hydrating here lets every
+// caller see a consistent view without having to read both files.
 func ReadManifest(projectDir string) (*Manifest, error) {
 	path := filepath.Join(projectDir, config.CopilotManifestFile)
 	data, err := os.ReadFile(path)
@@ -141,6 +148,9 @@ func ReadManifest(projectDir string) (*Manifest, error) {
 	}
 	if m.Version != ManifestVersion {
 		return nil, fmt.Errorf("read manifest: unsupported version %d (expected %d)", m.Version, ManifestVersion)
+	}
+	if cronID := ReadCronIDFile(projectDir); cronID != "" {
+		m.CronID = cronID
 	}
 	return &m, nil
 }

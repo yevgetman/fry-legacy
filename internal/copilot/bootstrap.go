@@ -55,6 +55,19 @@ func Bootstrap(opts BootstrapOpts) (*BootstrapResult, error) {
 		return nil, err
 	}
 
+	// Detect any leftover copilot state from a previous build that wasn't
+	// cleanly torn down. fry cannot cancel external crons; the orphan must
+	// self-prune via Tick Checklist step 0 in templates/copilot/bootstrap.md.
+	// We surface a warning here so users know why a phantom session may
+	// briefly continue ticking after `fry clean`.
+	if warning := LeftoverCronWarning(opts.ProjectDir); warning != "" {
+		stdout := opts.Stdout
+		if stdout == nil {
+			stdout = os.Stdout
+		}
+		fmt.Fprintf(stdout, "fry: warning: %s\n", warning)
+	}
+
 	// Determine mode and force-passive resolution.
 	mode := ModeActive
 	if opts.DryRun {

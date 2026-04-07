@@ -80,6 +80,37 @@ func TestBootstrapDryRunPrintsBanner(t *testing.T) {
 	assert.Contains(t, output, "dry-run")
 }
 
+func TestBootstrapWarnsOnLeftoverCron(t *testing.T) {
+	t.Parallel()
+
+	opts := defaultBootstrapOpts(t)
+	// Plant a leftover cron.id from a "previous build" that wasn't
+	// cleanly torn down. No manifest exists.
+	require.NoError(t, WriteCronIDFile(opts.ProjectDir, "leftover-cron-from-prior-run"))
+
+	var buf bytes.Buffer
+	opts.Stdout = &buf
+	_, err := Bootstrap(opts)
+	require.NoError(t, err)
+
+	output := buf.String()
+	assert.Contains(t, output, "fry: warning")
+	assert.Contains(t, output, "leftover-cron-from-prior-run")
+	assert.Contains(t, output, "self-prune")
+}
+
+func TestBootstrapNoWarningWhenNoLeftover(t *testing.T) {
+	t.Parallel()
+
+	opts := defaultBootstrapOpts(t)
+	var buf bytes.Buffer
+	opts.Stdout = &buf
+	_, err := Bootstrap(opts)
+	require.NoError(t, err)
+
+	assert.NotContains(t, buf.String(), "leftover copilot cron")
+}
+
 func TestBootstrapPassiveModeNoFrySource(t *testing.T) {
 	t.Parallel()
 

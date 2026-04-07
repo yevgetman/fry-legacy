@@ -29,6 +29,14 @@ You are running for the first time. Do exactly this:
    Capture the cron ID returned and write it to .fry/copilot/cron.id
    (one line, no trailing newline).
 
+   IMPORTANT — REMEMBER YOUR CRON ID. You will need it later to
+   self-prune if you become orphaned (see Tick Checklist step 0).
+   The .fry/copilot/cron.id file may be overwritten by a different
+   copilot session, so do NOT rely on it as the source of truth for
+   your own cron ID. Your authoritative record is the cron ID you
+   captured from your CronCreate call right here, plus your own
+   session ID ({{.SessionID}}).
+
 3. Append to .fry/copilot/events.txt (one line):
      {{.NowISO}}  Copilot bootstrapped (session {{.SessionID}}, cron <id>, every {{.IntervalMinutes}}m).
 
@@ -55,6 +63,39 @@ On each wake, you will:
 
 Walk through these in order. Stop reasoning and intervene the moment you
 find an answer that demands action.
+
+0. ORPHAN CHECK — are you still the legitimate copilot for this build?
+
+   You are an ORPHAN in any of these cases:
+
+   (a) .fry/copilot/manifest.json does not exist. The user ran `fry clean`,
+       `fry destroy`, or manually deleted the directory. Your build is gone.
+
+   (b) .fry/copilot/manifest.json exists but its session_id field is NOT
+       {{.SessionID}}. A new fry build started in this directory and
+       bootstrapped a different copilot session over the top of you.
+       The .fry/copilot/cron.id file now belongs to the new copilot.
+
+   (c) .fry/copilot/manifest.json exists but its build_pid is dead AND
+       last_updated_at is more than 30 minutes ago. The build crashed
+       and was never resumed. Continued ticking is wasteful.
+
+   If ANY of (a), (b), or (c) apply, you are orphaned. Self-prune:
+
+     1. Append a final line to .fry/copilot/events.txt:
+          {{.NowISO}}  Orphaned ({{.SessionID}}) — exiting cleanly.
+        (Skip if .fry/copilot/ no longer exists — case (a) of orphaning.)
+     2. Run: fry copilot emit-event --type=copilot_cron_removed \
+          --data='{"cron_id":"<YOUR cron ID>","reason":"orphaned"}'
+        (Skip if .fry/copilot/ no longer exists.)
+     3. Call CronDelete with YOUR own cron ID — the one you captured
+        from CronCreate at bootstrap time, NOT the one currently in
+        cron.id (which may belong to a different copilot now).
+     4. Exit the session immediately. Do NOT bootstrap again. Do NOT
+        run any other tick steps.
+
+   If none of (a), (b), or (c) apply, you are the legitimate owner.
+   Continue to step 1.
 
 1. IS THE BUILD MAKING PROGRESS?
    - Has state-snapshot.json.last_updated_at changed since your last wake?
@@ -257,10 +298,10 @@ You stop and run the final summary when:
    despite your interventions. Run one final "hail mary" intervention; if
    that doesn't move the needle, stop.
 5. User requested stop — .fry/copilot/stop-requested file exists
-6. Anomalous: manifest.json is gone. You are orphaned. Clean up your cron
-   and exit quietly.
+6. Orphaned — handled by Tick Checklist step 0 BEFORE you reach this list.
+   Step 0 self-prunes (CronDelete + exit) without writing a final summary.
 
-On any stop condition: jump to FINAL SUMMARY (below).
+On stop conditions 1–5: jump to FINAL SUMMARY (below).
 
 # Final Summary Procedure
 

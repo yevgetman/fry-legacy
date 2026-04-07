@@ -76,6 +76,26 @@ func TestRenderBootstrapPromptIncludesTickChecklist(t *testing.T) {
 	assert.Contains(t, prompt, "IS THE BUILD STUCK")
 }
 
+func TestRenderBootstrapPromptIncludesOrphanCheck(t *testing.T) {
+	t.Parallel()
+
+	data := defaultBootstrapData()
+	prompt, err := RenderBootstrapPrompt(data)
+	require.NoError(t, err)
+
+	// Step 0 of the tick checklist must instruct the agent to detect
+	// orphan status (manifest absent OR session_id mismatch) and call
+	// CronDelete to self-prune.
+	assert.Contains(t, prompt, "ORPHAN CHECK")
+	assert.Contains(t, prompt, "manifest.json does not exist")
+	assert.Contains(t, prompt, "session_id field is NOT")
+	assert.Contains(t, prompt, "CronDelete")
+	assert.Contains(t, prompt, "Self-prune")
+	// The agent must be told to remember its own cron ID at bootstrap.
+	assert.Contains(t, prompt, "REMEMBER YOUR CRON ID")
+	assert.Contains(t, prompt, data.SessionID)
+}
+
 func TestRenderBootstrapPromptIncludesAllInterventionProcedures(t *testing.T) {
 	t.Parallel()
 

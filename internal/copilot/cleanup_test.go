@@ -124,3 +124,79 @@ func TestCleanlyExitedWithCronStillSet(t *testing.T) {
 
 	assert.False(t, cleanlyExited(dir))
 }
+
+func TestLeftoverCronWarningEmptyDir(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	assert.Empty(t, LeftoverCronWarning(dir))
+}
+
+func TestLeftoverCronWarningNoManifestNoCron(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	// Create the dir but no cron.id and no manifest.
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, config.CopilotDir), 0o755))
+	assert.Empty(t, LeftoverCronWarning(dir))
+}
+
+func TestLeftoverCronWarningActiveManifest(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	// With an active manifest, the cron.id is legitimate, not a leftover.
+	writeManifestForTest(t, dir)
+	require.NoError(t, WriteCronIDFile(dir, "active-cron-id"))
+	assert.Empty(t, LeftoverCronWarning(dir),
+		"an active manifest means cron.id is legitimate, not a leftover")
+}
+
+func TestLeftoverCronWarningOrphanCronDetected(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	// Cron.id present but no manifest -> leftover from a wiped previous build.
+	require.NoError(t, WriteCronIDFile(dir, "orphan-cron-id-99"))
+	warning := LeftoverCronWarning(dir)
+	require.NotEmpty(t, warning)
+	assert.Contains(t, warning, "orphan-cron-id-99")
+	assert.Contains(t, warning, "self-prune")
+}
+
+func TestReadManifestHydratesCronIDFromDisk(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	// Write a manifest with empty CronID (this is what fry main always
+	// produces, because the agent installs the cron after the manifest is
+	// written).
+	require.NoError(t, WriteManifest(dir, &Manifest{
+		SessionID: "test-session",
+		BuildPID:  os.Getpid(),
+		Engine:    "claude",
+		Mode:      ModeActive,
+	}))
+
+	// Then write the cron.id file (this is what the agent does after
+	// CronCreate succeeds).
+	require.NoError(t, WriteCronIDFile(dir, "cron_test_xyz"))
+
+	// ReadManifest should hydrate the CronID from the cron.id file.
+	got, err := ReadManifest(dir)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, "cron_test_xyz", got.CronID,
+		"ReadManifest should hydrate CronID from .fry/copilot/cron.id when present")
+}
+
+func TestReadManifestPreservesEmptyCronIDWhenFileMissing(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	// Manifest only — no cron.id file.
+	require.NoError(t, WriteManifest(dir, &Manifest{
+		SessionID: "test-session",
+		Mode:      ModeActive,
+	}))
+	got, err := ReadManifest(dir)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, "", got.CronID,
+		"missing cron.id file should leave CronID as the on-disk value (empty)")
+}

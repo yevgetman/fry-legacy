@@ -127,3 +127,31 @@ func CopilotConfigured(projectDir string) bool {
 	manifest, _ := ReadManifest(projectDir)
 	return manifest != nil
 }
+
+// LeftoverCronWarning returns a non-empty user-facing warning string when a
+// previous copilot's cron.id file exists in projectDir but no current
+// manifest exists (i.e. fry clean / fry destroy / manual rm has wiped the
+// manifest but the cron itself still lives in Claude Code's session storage).
+//
+// fry CANNOT cancel external crons — they live in the agent runtime, not
+// the project dir. The orphan agent is expected to self-prune on its next
+// tick via Tick Checklist step 0 in templates/copilot/bootstrap.md.
+//
+// Returns "" when no leftover state is detected, or when there's an active
+// manifest (in which case cron.id is legitimate, not a leftover).
+func LeftoverCronWarning(projectDir string) string {
+	if CopilotConfigured(projectDir) {
+		return ""
+	}
+	cronID := ReadCronIDFile(projectDir)
+	if cronID == "" {
+		return ""
+	}
+	return fmt.Sprintf(
+		"leftover copilot cron %q detected in %s/.fry/copilot/cron.id but no manifest is present. "+
+			"This usually means a previous build's copilot session is still scheduled in Claude Code's runtime — "+
+			"fry cannot cancel it directly. The orphan should self-prune on its next wake (the bootstrap "+
+			"prompt instructs the agent to detect this case and call CronDelete). If it persists, you can clear "+
+			"it manually by resuming the orphan with `claude --resume <session-id>` and asking it to delete its cron.",
+		cronID, projectDir)
+}

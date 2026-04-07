@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/yevgetman/fry/internal/archive"
+	"github.com/yevgetman/fry/internal/copilot"
 	"github.com/yevgetman/fry/internal/lock"
 )
 
@@ -27,6 +28,23 @@ var cleanCmd = &cobra.Command{
 
 		if lock.IsLocked(projectPath) {
 			fmt.Fprintln(cmd.ErrOrStderr(), "fry: warning: a build appears to be running (lock file active)")
+		}
+
+		// Warn the user that fry clean cannot cancel copilot crons.
+		// The cron lives in Claude Code's session storage, not in .fry/.
+		// The orphan agent should self-prune on its next wake (Tick
+		// Checklist step 0), but the user should know what to expect.
+		if copilot.CopilotConfigured(projectPath) {
+			cronID := copilot.ReadCronIDFile(projectPath)
+			if cronID != "" {
+				fmt.Fprintf(cmd.ErrOrStderr(),
+					"fry: warning: copilot cron %q will be archived to .fry-archive/ along with .fry/, "+
+						"but the cron itself remains scheduled in Claude Code's runtime. fry cannot cancel "+
+						"external crons. The orphan should self-prune on its next wake (the bootstrap "+
+						"prompt detects a missing manifest and calls CronDelete). If it persists, resume "+
+						"the orphan with `claude --resume <session-id>` and ask it to delete its cron.\n",
+					cronID)
+			}
 		}
 
 		force, _ := cmd.Flags().GetBool("force")
