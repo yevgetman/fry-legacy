@@ -22,7 +22,17 @@ func (e *CodexEngine) Run(ctx context.Context, prompt string, opts RunOpts) (str
 
 	err := cmd.Run()
 	exitCode := exitCodeFromError(err)
-	return buffer.String(), exitCode, err
+	output := buffer.String()
+
+	// Detect codex's "not authenticated" output. Same rationale as
+	// the claude engine: without this check fry would happily write
+	// the auth error string into build artifacts and fail downstream
+	// with inscrutable validation errors.
+	if looksLikeNotLoggedIn(output, codexNotLoggedInPatterns) {
+		return output, exitCode, wrapNotAuthenticated("codex", output, "codex login")
+	}
+
+	return output, exitCode, err
 }
 
 func (e *CodexEngine) Name() string {
