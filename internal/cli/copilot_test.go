@@ -175,6 +175,115 @@ func TestCopilotStatusStaleAfterWakesWhenBuildDead(t *testing.T) {
 	assert.Contains(t, out, "STALE")
 }
 
+func TestCopilotStatusDoesNotModifySnapshotFile(t *testing.T) {
+	// Bug 16 regression test. The original Bug 15 fix called
+	// ForceWriteStateSnapshot from the CLI's status command to surface
+	// fresh data, but buildSnapshot uses os.Getpid() to populate
+	// BuildPID — when called from a CLI helper, that captures the
+	// CLI's ephemeral PID instead of fry main's PID, then exits,
+	// leaving the snapshot file with a dead PID and build_pid_alive=true.
+	// This test ensures the CLI status command never mutates the
+	// snapshot file under any circumstances.
+	dir := t.TempDir()
+	plantCopilotManifest(t, dir, "test-session-uuid")
+
+	// Plant a snapshot with a known sentinel PID and build_phase. If
+	// the CLI rewrites the file, BuildPID will become os.Getpid() and
+	// the assertion below will fail with a clear diagnostic.
+	snapPath := filepath.Join(dir, config.CopilotStateSnapshotFile)
+	require.NoError(t, os.MkdirAll(filepath.Dir(snapPath), 0o755))
+	plantedJSON := `{
+  "ts": "2026-04-07T20:00:00Z",
+  "build_phase": "sprint",
+  "build_pid": 99999,
+  "build_pid_alive": true,
+  "current_sprint": 2,
+  "total_sprints": 7
+}
+`
+	require.NoError(t, os.WriteFile(snapPath, []byte(plantedJSON), 0o644))
+
+	beforeStat, err := os.Stat(snapPath)
+	require.NoError(t, err)
+	beforeMTime := beforeStat.ModTime()
+	beforeBytes, err := os.ReadFile(snapPath)
+	require.NoError(t, err)
+
+	// Run the CLI status command three times in a row — each call would
+	// previously rewrite the snapshot with the CLI's PID via
+	// ForceWriteStateSnapshot.
+	for i := 0; i < 3; i++ {
+		_, _ = runRootCmd(t, "copilot", "status", "--project-dir", dir)
+	}
+
+	afterStat, err := os.Stat(snapPath)
+	require.NoError(t, err)
+	afterBytes, err := os.ReadFile(snapPath)
+	require.NoError(t, err)
+
+	assert.Equal(t, beforeMTime, afterStat.ModTime(),
+		"fry copilot status must NOT touch the snapshot file mtime — "+
+			"writing from a CLI helper clobbers BuildPID with the CLI's ephemeral PID (Bug 16)")
+	assert.Equal(t, string(beforeBytes), string(afterBytes),
+		"fry copilot status must NOT modify snapshot file bytes")
+	// Sentinel PID must still be present.
+	assert.Contains(t, string(afterBytes), `"build_pid": 99999`,
+		"snapshot's planted sentinel PID must survive multiple status calls")
+}
+
+func TestCopilotStatusOverlaysFreshBuildStatus(t *testing.T) {
+	// Bug 15 (CLI side) coverage. The CLI must surface fresh
+	// build_phase / current_sprint values from build-status.json
+	// even when the on-disk snapshot is stale, but it must do so
+	// without writing back to the snapshot file (Bug 16).
+	dir := t.TempDir()
+	plantCopilotManifest(t, dir, "test-session-uuid")
+
+	// Plant a stale snapshot file (says sprint 1).
+	snapPath := filepath.Join(dir, config.CopilotStateSnapshotFile)
+	require.NoError(t, os.MkdirAll(filepath.Dir(snapPath), 0o755))
+	require.NoError(t, os.WriteFile(snapPath, []byte(`{
+  "ts": "2026-04-07T20:00:00Z",
+  "build_phase": "sprint",
+  "build_pid": 11111,
+  "current_sprint": 1,
+  "total_sprints": 7
+}
+`), 0o644))
+
+	// Plant a FRESH build-status.json (says audit, sprint 4).
+	statusPath := filepath.Join(dir, config.BuildStatusFile)
+	require.NoError(t, os.MkdirAll(filepath.Dir(statusPath), 0o755))
+	require.NoError(t, os.WriteFile(statusPath, []byte(`{
+  "version": 1,
+  "updated_at": "2026-04-07T21:00:00Z",
+  "build": {
+    "epic": "Test",
+    "effort": "max",
+    "engine": "claude",
+    "mode": "software",
+    "total_sprints": 7,
+    "current_sprint": 4,
+    "status": "running",
+    "phase": "audit",
+    "started_at": "2026-04-07T20:00:00Z"
+  },
+  "sprints": [
+    {"number": 4, "name": "Brand Module", "status": "running"}
+  ]
+}
+`), 0o644))
+
+	out, err := runRootCmd(t, "copilot", "status", "--project-dir", dir)
+	require.NoError(t, err)
+	// Display must reflect the FRESH build-status.json values, not the
+	// stale snapshot values.
+	assert.Contains(t, out, "audit", "build_phase must reflect fresh build-status.json")
+	assert.Contains(t, out, "4/7", "current_sprint must reflect fresh build-status.json")
+	assert.Contains(t, out, "Brand Module", "sprint name must reflect fresh build-status.json")
+	assert.NotContains(t, out, "1/7", "stale current_sprint=1 from snapshot must not leak through")
+}
+
 func TestCopilotStatusJSON(t *testing.T) {
 	dir := t.TempDir()
 	plantCopilotManifest(t, dir, "test-session-uuid")

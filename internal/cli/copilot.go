@@ -15,6 +15,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/yevgetman/fry/internal/agent"
 	"github.com/yevgetman/fry/internal/config"
 	"github.com/yevgetman/fry/internal/copilot"
 	"github.com/yevgetman/fry/internal/git"
@@ -55,15 +56,22 @@ var copilotStatusCmd = &cobra.Command{
 			return cobraExitWithCode(1)
 		}
 
-		// Refresh the state snapshot before reading so the user always
-		// sees current build state. The snapshot writer is debounced
-		// elsewhere (10s window), but `fry copilot status` should never
-		// surface stale data — Force bypasses the debounce. Errors are
-		// non-fatal: an unwritable .fry/copilot/ directory just means
-		// the existing snapshot will be read, not failure.
-		_ = copilot.ForceWriteStateSnapshot(dir)
-
+		// Read the on-disk snapshot for fields that only fry main writes
+		// (DeferredFailuresCount, RecentEventsTail, etc.). Then overlay
+		// fresh build-status.json data on top so the user sees current
+		// build_phase / current_sprint without depending on fry main
+		// having recently rewritten the snapshot.
+		//
+		// IMPORTANT: this CLI must NEVER call WriteStateSnapshot or
+		// ForceWriteStateSnapshot. buildSnapshot() in the copilot package
+		// uses os.Getpid() to populate BuildPID — calling it from a CLI
+		// helper would clobber the field with the CLI's ephemeral PID,
+		// then exit, leaving the snapshot file with a dead PID and
+		// build_pid_alive=true (the CLI was alive at write time). The
+		// next copilot agent wake would then mis-read the build PID.
+		// This is the regression that produced Bug 16. Read-only here.
 		snapshot, _ := copilot.ReadStateSnapshot(dir)
+		snapshot = overlayFreshBuildStatus(dir, snapshot)
 		busy := copilot.IsBusy(dir)
 		cronID := copilot.ReadCronIDFile(dir)
 		events, _ := copilot.ReadEvents(dir)
@@ -557,6 +565,45 @@ func statusVerbFromState(buildAlive bool, hasWakeEvents bool) string {
 	default:
 		return "active"
 	}
+}
+
+// overlayFreshBuildStatus returns a copy of the on-disk snapshot with
+// build_phase / current_sprint / current_sprint_name / build_status /
+// total_sprints fields refreshed from build-status.json. This is the
+// CLI-side fix for Bug 15 (snapshot staleness): rather than calling
+// ForceWriteStateSnapshot from the CLI (which would clobber BuildPID
+// with the CLI's own ephemeral PID — Bug 16), we read the canonical
+// build-status.json directly and overlay the fresh fields onto an
+// in-memory copy of the snapshot. The on-disk snapshot file is NEVER
+// modified by this helper.
+//
+// If reading build-status.json fails, the original snapshot is returned
+// unchanged. If the snapshot is nil but build-status.json reads
+// successfully, a new snapshot is constructed with only the overlay
+// fields set. PID-bearing fields (BuildPID, BuildPIDAlive) are NEVER
+// touched here — they remain whatever the on-disk snapshot recorded
+// (or zero if the snapshot was nil).
+func overlayFreshBuildStatus(projectDir string, snap *copilot.StateSnapshot) *copilot.StateSnapshot {
+	status, err := agent.ReadBuildStatus(projectDir)
+	if err != nil || status == nil {
+		return snap
+	}
+	if snap == nil {
+		snap = &copilot.StateSnapshot{}
+	}
+	out := *snap // copy so we never mutate the cached pointer
+	out.BuildPhase = status.Build.Phase
+	out.BuildMode = status.Build.Mode
+	out.BuildStatus = status.Build.Status
+	out.CurrentSprint = status.Build.CurrentSprint
+	out.TotalSprints = status.Build.TotalSprints
+	for i := range status.Sprints {
+		if status.Sprints[i].Number == status.Build.CurrentSprint {
+			out.CurrentSprintName = status.Sprints[i].Name
+			break
+		}
+	}
+	return &out
 }
 
 func sortedEventTypeKeys(m map[observer.EventType]int) []observer.EventType {
