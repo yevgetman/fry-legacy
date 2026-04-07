@@ -42,6 +42,7 @@ type Executor interface {
 	DiffStat(ctx context.Context, dir string, excludePathspecs []string) (string, error)
 	ListUntracked(ctx context.Context, dir string, excludePathspecs []string) ([]string, error)
 	StatusPorcelain(ctx context.Context, dir string) (string, error)
+	StatusPorcelainUntrackedAll(ctx context.Context, dir string) (string, error)
 	LogGrep(ctx context.Context, dir string, grepPattern string, maxCount int, format string) (string, error)
 
 	// File restoration
@@ -197,6 +198,15 @@ func (e *ExecExecutor) ListUntracked(ctx context.Context, dir string, excludePat
 
 func (e *ExecExecutor) StatusPorcelain(ctx context.Context, dir string) (string, error) {
 	return e.output(ctx, dir, "git", "status", "--porcelain")
+}
+
+// StatusPorcelainUntrackedAll runs `git status --porcelain --untracked-files=all`
+// so that untracked directories expand to one line per individual untracked
+// file. The default `git status --porcelain` collapses untracked directories to
+// a single `?? dir/` line, which is content-blind to anything inside that
+// directory and breaks no-op detection during the audit fix loop.
+func (e *ExecExecutor) StatusPorcelainUntrackedAll(ctx context.Context, dir string) (string, error) {
+	return e.output(ctx, dir, "git", "status", "--porcelain", "--untracked-files=all")
 }
 
 func (e *ExecExecutor) LogGrep(ctx context.Context, dir string, grepPattern string, maxCount int, format string) (string, error) {

@@ -271,8 +271,18 @@ func DiffStatForNoopDetectionWith(ctx context.Context, projectDir string, ex Exe
 
 // WorktreeFingerprintForNoopDetection returns a fingerprint of the working tree
 // suitable for no-op detection. It combines diff-stat output with filtered
-// porcelain status so untracked-file changes count as real work while progress
-// file writes remain excluded.
+// porcelain status so both tracked AND untracked file changes count as real
+// work, while progress file writes remain excluded.
+//
+// Untracked files require special handling: `git status --porcelain` (default
+// mode) collapses untracked directories to a single `?? dir/` line and never
+// reports content changes inside them. Two compensating measures are applied
+// here so the fingerprint actually reflects content edits:
+//   - The porcelain call is made with --untracked-files=all so each untracked
+//     file gets its own line.
+//   - Each `?? path` line is enriched with the file's size and mtime, so an
+//     edit to the file changes the fingerprint even though the porcelain
+//     status code itself is unchanged.
 func WorktreeFingerprintForNoopDetection(ctx context.Context, projectDir string) string {
 	return WorktreeFingerprintForNoopDetectionWith(ctx, projectDir, DefaultExecutor)
 }
@@ -281,26 +291,68 @@ func WorktreeFingerprintForNoopDetection(ctx context.Context, projectDir string)
 // but uses the provided Executor.
 func WorktreeFingerprintForNoopDetectionWith(ctx context.Context, projectDir string, ex Executor) string {
 	diff := DiffStatForNoopDetectionWith(ctx, projectDir, ex)
-	status, err := ex.StatusPorcelain(ctx, projectDir)
+	status, err := ex.StatusPorcelainUntrackedAll(ctx, projectDir)
 	if err != nil {
 		frylog.Log("WARNING: git status --porcelain failed: %v", err)
 		return fmt.Sprintf("__git_status_error_%d__", time.Now().UnixNano())
 	}
 
 	filteredStatus := filterStatusForNoopDetection(status)
+	enrichedStatus := enrichUntrackedWithSizeMtime(projectDir, filteredStatus)
 	diff = strings.TrimSpace(diff)
-	filteredStatus = strings.TrimSpace(filteredStatus)
+	enrichedStatus = strings.TrimSpace(enrichedStatus)
 
 	switch {
-	case diff == "" && filteredStatus == "":
+	case diff == "" && enrichedStatus == "":
 		return ""
 	case diff == "":
-		return filteredStatus
-	case filteredStatus == "":
+		return enrichedStatus
+	case enrichedStatus == "":
 		return diff
 	default:
-		return diff + "\n--status--\n" + filteredStatus
+		return diff + "\n--status--\n" + enrichedStatus
 	}
+}
+
+// enrichUntrackedWithSizeMtime appends size and mtime suffixes to untracked
+// porcelain lines (`?? path`). This is what makes the no-op fingerprint
+// sensitive to content changes inside untracked files — without it, an edit
+// to an untracked file leaves the porcelain output identical and the fix
+// agent's real work gets misclassified as a no-op.
+//
+// Other porcelain lines (modified, added, deleted, renamed) are left
+// unchanged because git diff already covers their content state via
+// DiffStatForNoopDetectionWith.
+func enrichUntrackedWithSizeMtime(projectDir, status string) string {
+	if status == "" {
+		return ""
+	}
+	var b strings.Builder
+	for i, line := range strings.Split(status, "\n") {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString(line)
+		if !strings.HasPrefix(line, "?? ") {
+			continue
+		}
+		path := strings.TrimSpace(line[3:])
+		if path == "" {
+			continue
+		}
+		// Lstat so symlinks are fingerprinted by the link itself, not its
+		// target — agents editing the link target shouldn't false-no-op,
+		// and agents editing the link itself shouldn't either.
+		info, statErr := os.Lstat(filepath.Join(projectDir, path))
+		if statErr != nil {
+			// File vanished between status and stat — record that fact in
+			// the fingerprint so it changes if the file reappears.
+			b.WriteString(" stat=err")
+			continue
+		}
+		fmt.Fprintf(&b, " size=%d mtime=%d", info.Size(), info.ModTime().UnixNano())
+	}
+	return b.String()
 }
 
 // RestoreFiles restores the given files to their HEAD state, discarding

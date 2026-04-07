@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -222,6 +223,58 @@ func TestWorktreeFingerprintForNoopDetection_IncludesUntrackedAndExcludesProgres
 	assert.NotContains(t, fingerprint, "__git_status_error_")
 }
 
+// Regression test for the meetingly3 false-no-op:
+// When sprint output sits in untracked directories (because the sprint git
+// checkpoint hasn't run yet), edits to those files MUST change the fingerprint.
+// Previously they did not, because `git status --porcelain` (default mode)
+// collapsed `apps/` to a single `?? apps/` line and never reported what was
+// inside it.
+func TestWorktreeFingerprintForNoopDetection_DetectsUntrackedFileContentChange(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	require.NoError(t, InitGit(context.Background(), projectDir))
+
+	// Create a deeply nested untracked file inside an untracked directory.
+	// This is the meetingly3 layout: apps/web/package.json inside an
+	// otherwise-untracked apps/ tree.
+	require.NoError(t, os.MkdirAll(projectDir+"/apps/web", 0o755))
+	require.NoError(t, os.WriteFile(projectDir+"/apps/web/package.json", []byte(`{"name":"web","version":"1.0.0"}`+"\n"), 0o644))
+
+	before := WorktreeFingerprintForNoopDetection(context.Background(), projectDir)
+	require.NotEmpty(t, before)
+	assert.Contains(t, before, "?? apps/web/package.json", "untracked-files=all should expand the directory")
+	assert.Contains(t, before, "size=", "fingerprint should include file size")
+	assert.Contains(t, before, "mtime=", "fingerprint should include file mtime")
+
+	// Sleep just long enough to guarantee an mtime delta on filesystems with
+	// coarse mtime resolution (some macOS filesystems are 1ns, some Linux are
+	// 1s — 1.1s covers both).
+	time.Sleep(1100 * time.Millisecond)
+
+	// Edit the file's content (this is what the audit fix agent would do).
+	require.NoError(t, os.WriteFile(projectDir+"/apps/web/package.json", []byte(`{"name":"web","version":"2.0.0"}`+"\n"), 0o644))
+
+	after := WorktreeFingerprintForNoopDetection(context.Background(), projectDir)
+	assert.NotEqual(t, before, after, "fingerprint must change when an untracked file's content is edited")
+}
+
+// A pure no-op (no files touched) must still report identical fingerprints
+// before and after — otherwise the fix agent would always look like it made
+// progress and we'd never detect actual no-ops.
+func TestWorktreeFingerprintForNoopDetection_PureNoOpStable(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	require.NoError(t, InitGit(context.Background(), projectDir))
+	require.NoError(t, os.MkdirAll(projectDir+"/apps/web", 0o755))
+	require.NoError(t, os.WriteFile(projectDir+"/apps/web/package.json", []byte(`{"name":"web"}`+"\n"), 0o644))
+
+	a := WorktreeFingerprintForNoopDetection(context.Background(), projectDir)
+	b := WorktreeFingerprintForNoopDetection(context.Background(), projectDir)
+	assert.Equal(t, a, b, "fingerprint of an unchanged worktree must be stable")
+}
+
 // P1: CommitPartialWork
 
 func TestCommitPartialWork(t *testing.T) {
@@ -399,8 +452,9 @@ type mockExecutor struct {
 	DiffHeadFn          func(ctx context.Context, dir string, excludePathspecs []string) (string, error)
 	DiffStatFn          func(ctx context.Context, dir string, excludePathspecs []string) (string, error)
 	ListUntrackedFn     func(ctx context.Context, dir string, excludePathspecs []string) ([]string, error)
-	StatusPorcelainFn   func(ctx context.Context, dir string) (string, error)
-	LogGrepFn           func(ctx context.Context, dir string, grepPattern string, maxCount int, format string) (string, error)
+	StatusPorcelainFn             func(ctx context.Context, dir string) (string, error)
+	StatusPorcelainUntrackedAllFn func(ctx context.Context, dir string) (string, error)
+	LogGrepFn                     func(ctx context.Context, dir string, grepPattern string, maxCount int, format string) (string, error)
 	RestoreFilesFn      func(ctx context.Context, dir string, files []string) error
 	CommitCountFn       func(ctx context.Context, dir string) (int, error)
 	ReadIndexFileFn     func(ctx context.Context, dir string, relativePath string) ([]byte, error)
@@ -508,6 +562,15 @@ func (m *mockExecutor) ListUntracked(ctx context.Context, dir string, excludePat
 	return nil, nil
 }
 func (m *mockExecutor) StatusPorcelain(ctx context.Context, dir string) (string, error) {
+	if m.StatusPorcelainFn != nil {
+		return m.StatusPorcelainFn(ctx, dir)
+	}
+	return "", nil
+}
+func (m *mockExecutor) StatusPorcelainUntrackedAll(ctx context.Context, dir string) (string, error) {
+	if m.StatusPorcelainUntrackedAllFn != nil {
+		return m.StatusPorcelainUntrackedAllFn(ctx, dir)
+	}
 	if m.StatusPorcelainFn != nil {
 		return m.StatusPorcelainFn(ctx, dir)
 	}
@@ -649,7 +712,7 @@ func TestWorktreeFingerprintForNoopDetectionWith_CombinesDiffAndStatus(t *testin
 		DiffStatFn: func(_ context.Context, _ string, _ []string) (string, error) {
 			return "file.go | 3 ++-", nil
 		},
-		StatusPorcelainFn: func(_ context.Context, _ string) (string, error) {
+		StatusPorcelainUntrackedAllFn: func(_ context.Context, _ string) (string, error) {
 			return "?? new-file.txt\n", nil
 		},
 	}
@@ -657,6 +720,8 @@ func TestWorktreeFingerprintForNoopDetectionWith_CombinesDiffAndStatus(t *testin
 	result := WorktreeFingerprintForNoopDetectionWith(context.Background(), t.TempDir(), ex)
 	assert.Contains(t, result, "file.go | 3 ++-")
 	assert.Contains(t, result, "?? new-file.txt")
+	// new-file.txt doesn't exist on disk in this test, so enrichment records stat=err
+	assert.Contains(t, result, "stat=err")
 }
 
 func TestWorktreeFingerprintForNoopDetectionWith_ExcludesProgressFiles(t *testing.T) {
@@ -666,13 +731,17 @@ func TestWorktreeFingerprintForNoopDetectionWith_ExcludesProgressFiles(t *testin
 		DiffStatFn: func(_ context.Context, _ string, _ []string) (string, error) {
 			return "", nil
 		},
-		StatusPorcelainFn: func(_ context.Context, _ string) (string, error) {
+		StatusPorcelainUntrackedAllFn: func(_ context.Context, _ string) (string, error) {
 			return " M .fry/sprint-progress.txt\n?? .fry/epic-progress.txt\n?? src/new-file.go\n", nil
 		},
 	}
 
 	result := WorktreeFingerprintForNoopDetectionWith(context.Background(), t.TempDir(), ex)
-	assert.Equal(t, "?? src/new-file.go", result)
+	// src/new-file.go doesn't exist on disk in this test, so it gets stat=err
+	// suffix from enrichment. Progress files must still be excluded.
+	assert.Contains(t, result, "?? src/new-file.go")
+	assert.NotContains(t, result, "sprint-progress.txt")
+	assert.NotContains(t, result, "epic-progress.txt")
 }
 
 func TestWorktreeFingerprintForNoopDetectionWith_StatusError(t *testing.T) {
@@ -682,7 +751,7 @@ func TestWorktreeFingerprintForNoopDetectionWith_StatusError(t *testing.T) {
 		DiffStatFn: func(_ context.Context, _ string, _ []string) (string, error) {
 			return "", nil
 		},
-		StatusPorcelainFn: func(_ context.Context, _ string) (string, error) {
+		StatusPorcelainUntrackedAllFn: func(_ context.Context, _ string) (string, error) {
 			return "", errors.New("status error")
 		},
 	}
