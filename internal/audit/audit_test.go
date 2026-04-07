@@ -690,6 +690,158 @@ func TestTargetFilesForFinding_RejectsPhantomPaths(t *testing.T) {
 	}
 }
 
+// --- LOW-only fix self-report parsing & application ---
+
+func TestParseLowFixResolutions(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		output string
+		total  int
+		want   int
+	}{
+		{
+			name:   "the meetingly3 output",
+			output: "**Issue 1 (LOW) — FIXED:** Moved `shadcn` from `dependencies` to `devDependencies` in `apps/web/package.json`.",
+			total:  1,
+			want:   1,
+		},
+		{
+			name:   "two issues both fixed",
+			output: "**Issue 1 — FIXED:** Did the thing.\n**Issue 2 (LOW) — RESOLVED:** Did the other thing.",
+			total:  2,
+			want:   2,
+		},
+		{
+			name:   "mixed FIXED and other statuses",
+			output: "**Issue 1 (LOW) — FIXED:** Real change.\n**Issue 2 (LOW) — VERIFIED:** Already correct.\n**Issue 3 (LOW) — DOCUMENTED:** No change needed.",
+			total:  3,
+			want:   1,
+		},
+		{
+			name:   "issue mentioned twice counts once",
+			output: "Issue 1: FIXED.\nLater: Issue 1 — FIXED again as I checked.",
+			total:  1,
+			want:   1,
+		},
+		{
+			name:   "no resolution claims",
+			output: "I looked at all 3 findings and decided they didn't apply. No changes needed.",
+			total:  3,
+			want:   0,
+		},
+		{
+			name:   "issue number out of range ignored",
+			output: "**Issue 7 — FIXED:** Bogus reference.",
+			total:  3,
+			want:   0,
+		},
+		{
+			name:   "case-insensitive match",
+			output: "issue 1 — fixed.\nISSUE 2 — RESOLVED.",
+			total:  2,
+			want:   2,
+		},
+		{
+			name:   "list bullet style",
+			output: "- Issue 1 — RESOLVED\n- Issue 2 — RESOLVED",
+			total:  2,
+			want:   2,
+		},
+		{
+			name:   "empty output",
+			output: "",
+			total:  3,
+			want:   0,
+		},
+		{
+			name:   "total zero",
+			output: "**Issue 1 — FIXED:** anything",
+			total:  0,
+			want:   0,
+		},
+		{
+			name:   "claims more than total — clamped",
+			output: "**Issue 1 — FIXED:** ...\n**Issue 2 — FIXED:** ...\n**Issue 3 — FIXED:** ...",
+			total:  2,
+			want:   2,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := parseLowFixResolutions(tc.output, tc.total)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestApplyLowResolutions(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nil counts returns nil", func(t *testing.T) {
+		t.Parallel()
+		out, sev := applyLowResolutions(nil, 3)
+		assert.Nil(t, out)
+		assert.Equal(t, "", sev)
+	})
+
+	t.Run("zero resolved leaves counts unchanged", func(t *testing.T) {
+		t.Parallel()
+		in := map[string]int{"LOW": 3, "MODERATE": 1}
+		out, sev := applyLowResolutions(in, 0)
+		assert.Equal(t, 3, out["LOW"])
+		assert.Equal(t, 1, out["MODERATE"])
+		assert.Equal(t, "MODERATE", sev)
+	})
+
+	t.Run("partial low resolution", func(t *testing.T) {
+		t.Parallel()
+		in := map[string]int{"LOW": 5}
+		out, sev := applyLowResolutions(in, 2)
+		assert.Equal(t, 3, out["LOW"])
+		assert.Equal(t, "LOW", sev)
+	})
+
+	t.Run("all lows resolved removes the key", func(t *testing.T) {
+		t.Parallel()
+		in := map[string]int{"LOW": 1}
+		out, sev := applyLowResolutions(in, 1)
+		_, exists := out["LOW"]
+		assert.False(t, exists, "LOW key should be deleted when count reaches 0")
+		assert.Equal(t, "", sev)
+	})
+
+	t.Run("over-credit clamps at zero, doesn't go negative", func(t *testing.T) {
+		t.Parallel()
+		in := map[string]int{"LOW": 2}
+		out, sev := applyLowResolutions(in, 5)
+		_, exists := out["LOW"]
+		assert.False(t, exists)
+		assert.Equal(t, "", sev)
+	})
+
+	t.Run("does not mutate input map", func(t *testing.T) {
+		t.Parallel()
+		in := map[string]int{"LOW": 3}
+		_, _ = applyLowResolutions(in, 1)
+		assert.Equal(t, 3, in["LOW"], "input map should be untouched")
+	})
+
+	t.Run("higher severity dominates max severity even after low cleared", func(t *testing.T) {
+		t.Parallel()
+		in := map[string]int{"LOW": 2, "HIGH": 1}
+		out, sev := applyLowResolutions(in, 5)
+		_, lowExists := out["LOW"]
+		assert.False(t, lowExists)
+		assert.Equal(t, 1, out["HIGH"])
+		assert.Equal(t, "HIGH", sev)
+	})
+}
+
 // --- effectiveOuterCycles tests ---
 
 func TestEffectiveOuterCycles(t *testing.T) {

@@ -295,9 +295,13 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 				lowFindings := decorateFindings(parseFindings(string(content)), cycle)
 				if len(lowFindings) > 0 {
 					frylog.Log("  AUDIT: LOW-only at max effort — running single fix pass before accepting")
-					if err := runSingleLowFixPass(ctx, opts, lowFindings, cycle, buildLogsDir, auditMetrics); err != nil {
+					resolvedLow, err := runSingleLowFixPass(ctx, opts, lowFindings, cycle, buildLogsDir, auditMetrics)
+					if err != nil {
 						frylog.Log("  AUDIT: low-fix pass failed: %v", err)
 					}
+					// Credit the agent's self-reported resolutions against the
+					// LOW count so the final result reflects the post-fix state.
+					counts, maxSev = applyLowResolutions(counts, resolvedLow)
 				}
 			}
 			frylog.Log("  AUDIT: pass (%s)", formatSeverityCounts(counts))
@@ -361,9 +365,14 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 				lowRemaining := filterLowUnresolved(activeFindings)
 				if len(lowRemaining) > 0 {
 					frylog.Log("  AUDIT: LOW-only at max effort — running single fix pass before accepting")
-					if err := runSingleLowFixPass(ctx, opts, lowRemaining, cycle, buildLogsDir, auditMetrics); err != nil {
+					resolvedLow, err := runSingleLowFixPass(ctx, opts, lowRemaining, cycle, buildLogsDir, auditMetrics)
+					if err != nil {
 						frylog.Log("  AUDIT: low-fix pass failed: %v", err)
 					}
+					// Credit the agent's self-reported resolutions against
+					// the LOW count so the final result reflects the
+					// post-fix state.
+					effectiveCounts, effectiveMaxSev = applyLowResolutions(effectiveCounts, resolvedLow)
 				}
 			}
 			frylog.Log("  AUDIT: pass (no actionable issues)")
@@ -629,10 +638,17 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 // runSingleLowFixPass runs one fix agent pass targeting LOW findings without
 // re-auditing. Used at max effort when only LOW findings remain — gives the
 // agent one chance to fix them before accepting the audit as passed.
-func runSingleLowFixPass(ctx context.Context, opts AuditOpts, findings []Finding, cycle int, buildLogsDir string, auditMetrics *AuditMetrics) error {
+//
+// Returns the number of findings the agent's output claimed to have FIXED or
+// RESOLVED. This is best-effort — there is no verify pass to confirm the
+// claims, but trusting the agent's self-report is materially more accurate
+// than reporting all LOW findings as still-unresolved (which is what happened
+// before — see the meetingly3 sprint 1 cycle 3 trace where shadcn was actually
+// moved to devDependencies but the audit result still showed `LOW: 1`).
+func runSingleLowFixPass(ctx context.Context, opts AuditOpts, findings []Finding, cycle int, buildLogsDir string, auditMetrics *AuditMetrics) (int, error) {
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return 0, ctx.Err()
 	default:
 	}
 
@@ -645,7 +661,7 @@ func runSingleLowFixPass(ctx context.Context, opts AuditOpts, findings []Finding
 	promptPath := filepath.Join(opts.ProjectDir, config.AuditPromptFile)
 	fixPrompt := buildFixPrompt(opts, findings, nil, nil)
 	if err := writePromptFile(promptPath, fixPrompt); err != nil {
-		return fmt.Errorf("run single low fix pass: write fix prompt: %w", err)
+		return 0, fmt.Errorf("run single low fix pass: write fix prompt: %w", err)
 	}
 
 	fixLogPath := filepath.Join(buildLogsDir,
@@ -669,7 +685,96 @@ func runSingleLowFixPass(ctx context.Context, opts AuditOpts, findings []Finding
 			Tokens:      tokenmetrics.ParseTokens(opts.Engine.Name(), fixOutput),
 		})
 	}
-	return err
+	if err != nil {
+		return 0, err
+	}
+	// Don't credit fix claims when no files were actually written. A fix
+	// agent that says "FIXED" but produced no diff is hallucinating.
+	if fixWasNoOp {
+		return 0, nil
+	}
+	resolved := parseLowFixResolutions(fixOutput, len(findings))
+	if resolved > 0 {
+		frylog.Log("  AUDIT FIX: LOW-only pass claimed to resolve %d/%d issues", resolved, len(findings))
+	}
+	return resolved, nil
+}
+
+// lowFixResolvedRe matches the per-issue resolution lines that fix agents
+// emit at the end of a LOW-only pass. Conservative on purpose: it only
+// counts findings the agent explicitly tagged FIXED or RESOLVED, not
+// VERIFIED, DOCUMENTED, NO_ACTION, ALREADY_RESOLVED, or any other status —
+// those mean the agent declined to make a change and the on-disk state may
+// or may not match the audit's claim. Examples that match:
+//
+//	**Issue 1 (LOW) — FIXED:** Moved shadcn ...
+//	**Issue 2 — RESOLVED:**
+//	Issue 3: FIXED
+//	- Issue 4 — RESOLVED
+//
+// Each unique Issue number counts at most once.
+var lowFixResolvedRe = regexp.MustCompile(`(?im)\bissue\s*(\d+)\b[^\n]*?\b(?:fixed|resolved)\b`)
+
+// parseLowFixResolutions counts how many distinct issue numbers in the agent's
+// output were tagged FIXED or RESOLVED. The result is capped at total so a
+// chatty agent that mentions an issue number twice can't overcount.
+func parseLowFixResolutions(output string, total int) int {
+	if total <= 0 || strings.TrimSpace(output) == "" {
+		return 0
+	}
+	matches := lowFixResolvedRe.FindAllStringSubmatch(output, -1)
+	if len(matches) == 0 {
+		return 0
+	}
+	seen := make(map[int]struct{}, len(matches))
+	for _, m := range matches {
+		if len(m) < 2 {
+			continue
+		}
+		n, err := strconv.Atoi(m[1])
+		if err != nil || n < 1 || n > total {
+			continue
+		}
+		seen[n] = struct{}{}
+	}
+	if len(seen) > total {
+		return total
+	}
+	return len(seen)
+}
+
+// applyLowResolutions returns a new severity-counts map with the LOW count
+// reduced by resolved (clamped to >= 0) and the corresponding max severity.
+// When the LOW count is zero after subtraction the key is removed entirely so
+// formatSeverityCounts renders "none" instead of "0 LOW". Non-LOW counts are
+// passed through untouched. The original map is not mutated.
+func applyLowResolutions(counts map[string]int, resolved int) (map[string]int, string) {
+	if counts == nil {
+		return nil, ""
+	}
+	out := make(map[string]int, len(counts))
+	for k, v := range counts {
+		out[k] = v
+	}
+	if resolved > 0 {
+		remaining := out["LOW"] - resolved
+		if remaining < 0 {
+			remaining = 0
+		}
+		if remaining == 0 {
+			delete(out, "LOW")
+		} else {
+			out["LOW"] = remaining
+		}
+	}
+	maxSev := ""
+	for _, sev := range []string{"CRITICAL", "HIGH", "MODERATE", "LOW"} {
+		if out[sev] > 0 {
+			maxSev = sev
+			break
+		}
+	}
+	return out, maxSev
 }
 
 // filterLowUnresolved returns unresolved LOW findings from the given slice.
