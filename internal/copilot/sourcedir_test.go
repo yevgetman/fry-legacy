@@ -35,6 +35,18 @@ func TestIsFrySourceDirMissingMarker(t *testing.T) {
 	assert.False(t, IsFrySourceDir(root))
 }
 
+func TestIsFrySourceDirWrongModulePath(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+
+	// Marker files exist but the module path is not fry — should be rejected.
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "internal", "cli"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module github.com/somebody/else\n\ngo 1.22\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "internal", "cli", "run.go"), []byte("package cli\n"), 0o644))
+
+	assert.False(t, IsFrySourceDir(root), "wrong module path should be rejected even when marker files exist")
+}
+
 func TestIsFrySourceDirEmptyPath(t *testing.T) {
 	t.Parallel()
 	assert.False(t, IsFrySourceDir(""))

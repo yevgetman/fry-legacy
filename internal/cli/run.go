@@ -244,7 +244,17 @@ var runCmd = &cobra.Command{
 		}
 		defer releaseLock()
 		// Copilot cleanup is best-effort and never blocks fry's exit.
-		defer func() { copilot.CleanupOnExit(projectPath) }()
+		// CleanupOnExit drops stale lock/PID files and writes a final
+		// snapshot. ArchiveCopilotDirIfDone moves the dir into archive/
+		// only when the copilot has cleanly exited (final-summary.md
+		// present, cron.id empty, no live tick lock) — otherwise it is
+		// a no-op so the next run can pick up where this one left off.
+		defer func() {
+			copilot.CleanupOnExit(projectPath)
+			if _, err := copilot.ArchiveCopilotDirIfDone(projectPath, ""); err != nil {
+				frlog.Log("WARNING: copilot archive: %v", err)
+			}
+		}()
 
 		printMigrationHintIfNeeded(cmd.OutOrStdout(), projectPath, epicArg)
 

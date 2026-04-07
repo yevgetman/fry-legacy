@@ -1,11 +1,14 @@
 package copilot
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,12 +17,18 @@ import (
 	"time"
 )
 
+// claudeProbeTimeout bounds how long we wait for `claude --help` /
+// `claude --version` to respond. A misbehaving binary should not be able
+// to hang fry's bootstrap path.
+const claudeProbeTimeout = 5 * time.Second
+
 // NewSessionUUID returns a freshly-generated v4 UUID suitable for passing
 // to `claude --session-id <uuid>`. Uses crypto/rand directly to avoid
 // adding a UUID library dependency (per CLAUDE.md: minimal deps).
 //
 // The generated UUID conforms to RFC 4122 v4 format:
-//   xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx where y ∈ {8,9,a,b}
+//
+//	xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx where y ∈ {8,9,a,b}
 func NewSessionUUID() (string, error) {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
@@ -59,8 +68,9 @@ type EngineProbeResult struct {
 func ProbeClaudeCapabilities() EngineProbeResult {
 	result := EngineProbeResult{Engine: "claude"}
 
-	cmd := exec.Command("claude", "--help")
-	out, err := cmd.CombinedOutput()
+	helpCtx, helpCancel := context.WithTimeout(context.Background(), claudeProbeTimeout)
+	defer helpCancel()
+	out, err := exec.CommandContext(helpCtx, "claude", "--help").CombinedOutput()
 	if err != nil {
 		return result
 	}
@@ -74,8 +84,9 @@ func ProbeClaudeCapabilities() EngineProbeResult {
 	}
 
 	// Best-effort version detection.
-	versionCmd := exec.Command("claude", "--version")
-	if vOut, vErr := versionCmd.CombinedOutput(); vErr == nil {
+	verCtx, verCancel := context.WithTimeout(context.Background(), claudeProbeTimeout)
+	defer verCancel()
+	if vOut, vErr := exec.CommandContext(verCtx, "claude", "--version").CombinedOutput(); vErr == nil {
 		result.Version = strings.TrimSpace(string(vOut))
 	}
 
@@ -126,21 +137,32 @@ type streamJSONEvent struct {
 //
 // timeout bounds how long the parse can wait for input. The caller is
 // expected to invoke ParseSessionIDFromStdout in a goroutine.
+//
+// Persistent decode errors (e.g., malformed JSON) cause a brief sleep
+// rather than a busy loop, so a misbehaving stream cannot pin a CPU.
 func ParseSessionIDFromStdout(r io.Reader, timeout time.Duration) (string, error) {
 	deadline := time.Now().Add(timeout)
 	dec := json.NewDecoder(r)
+	consecutiveErrors := 0
 	for {
 		if time.Now().After(deadline) {
 			return "", fmt.Errorf("parse session id from stdout: timed out after %s", timeout)
 		}
 		var evt streamJSONEvent
 		if err := dec.Decode(&evt); err != nil {
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				return "", io.EOF
 			}
-			// Skip malformed records — they may be partial writes.
+			// Skip malformed records, but back off so we don't burn CPU
+			// on a stream that's emitting nothing but errors.
+			consecutiveErrors++
+			if consecutiveErrors >= 8 {
+				return "", fmt.Errorf("parse session id from stdout: too many consecutive decode errors: %w", err)
+			}
+			time.Sleep(50 * time.Millisecond)
 			continue
 		}
+		consecutiveErrors = 0
 		if evt.SessionID != "" {
 			return evt.SessionID, nil
 		}
@@ -189,13 +211,17 @@ type sessionFileCandidate struct {
 
 func scanForNewSessionFiles(root string, since time.Time) ([]sessionFileCandidate, error) {
 	var found []sessionFileCandidate
-	err := filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			// Don't fail the walk on per-entry errors — projects dir may
 			// have stale symlinks or unreadable subdirs.
 			return nil
 		}
-		if info.IsDir() || filepath.Ext(path) != ".jsonl" {
+		if d.IsDir() || filepath.Ext(path) != ".jsonl" {
+			return nil
+		}
+		info, infoErr := d.Info()
+		if infoErr != nil {
 			return nil
 		}
 		if info.ModTime().After(since) {

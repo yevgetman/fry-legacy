@@ -23,14 +23,16 @@ Skip the copilot when:
 
 ### Persistent session model
 
-The copilot is **one long-lived agent session**, not N short sessions. fry's main process spawns one Claude Code session at build start; that session installs its own recurring schedule via `CronCreate`; the cron fires wake messages **into the same session** until the build completes.
+The copilot is **one logical Claude Code session**, identified by a stable session UUID. The *processes* that run inside that session are short-lived: each tick is its own `claude --resume <session-id> -p` invocation that exits after producing output. What ties them together is the shared session UUID and the `CronCreate` schedule the bootstrap installs.
 
-This matters because:
+The mental model:
 
-- **Context is continuous.** The session remembers every previous tick — no reload from disk required.
+- **The session is the conversation, not a long-running process.** Claude Code stores the conversation under `~/.claude/projects/<hash>/<session-id>.jsonl`. Any process that resumes that session sees the full history.
+- **The cron is the persistence mechanism.** `CronCreate` arranges for periodic `claude --resume` invocations that re-enter the conversation, run the tick checklist, and exit. fry does not need to keep its own subprocess alive between wakes.
+- **`bootstrap.pid` is informational, not a liveness signal.** The bootstrap subprocess exits within seconds of installing the cron. `fry copilot status` reports liveness based on the *build* PID and the presence of `cron.id`, not the bootstrap PID.
 - **Auto-compact handles growth.** A 6-hour build × 10 min ticks ≈ 180k tokens, well under 1M.
 - **Attach is trivial.** One stable session ID. `fry copilot attach` resumes it.
-- **Cost is lower.** No per-tick re-embedding of identity, authority, build context.
+- **Cost is lower than per-tick re-bootstrapping.** Each tick reuses the conversation context instead of re-embedding identity, authority, and build state.
 
 ### Process flow
 
@@ -41,28 +43,29 @@ fry main: parse flags, validate, discover fry source dir
    ↓
 fry main: write .fry/copilot/manifest.json
    ↓
-fry main: spawn detached `claude --session-id <uuid> -p` subprocess
+fry main: spawn detached `claude --session-id <uuid> -p` subprocess (bootstrap)
    ↓
 fry main: print startup banner with attach instructions
    ↓
-copilot agent: read identity + authority + bootstrap prompt
-copilot agent: install cron via CronCreate (every 10m)
-copilot agent: write .fry/copilot/cron.id
-copilot agent: go idle
+bootstrap subprocess: read identity + authority + bootstrap prompt
+bootstrap subprocess: install cron via CronCreate (every 10m)
+bootstrap subprocess: write .fry/copilot/cron.id
+bootstrap subprocess: exit  ← (claude -p runs once and terminates)
    ↓
-   (every 10 minutes)
+   (every 10 minutes the cron fires:)
    ↓
-copilot agent: re-read state-snapshot.json
-copilot agent: run tick checklist
-copilot agent: intervene if needed (FRY-SOURCE / ARTIFACT / RESTART procedures)
-copilot agent: update events.txt, scratchpad.md, interventions/
-copilot agent: go idle
+new claude --resume <session-id> subprocess: re-enter the conversation
+   re-read state-snapshot.json
+   run tick checklist
+   intervene if needed (FRY-SOURCE / ARTIFACT / RESTART procedures)
+   update events.txt, scratchpad.md, interventions/
+   exit  ← (each tick is its own short-lived process)
    ↓
-   (build completes or fails)
+   (build completes or fails — next tick detects it:)
    ↓
-copilot agent: write .fry/copilot/final-summary.md
-copilot agent: CronDelete + emit copilot_cron_removed
-copilot agent: exit cleanly
+final tick: write .fry/copilot/final-summary.md
+final tick: CronDelete + emit copilot_cron_removed
+final tick: exit  ← (no more cron, no more ticks)
 ```
 
 ### State snapshot
@@ -75,8 +78,8 @@ fry's main process writes `.fry/copilot/state-snapshot.json` at every observer w
 .fry/copilot/
 ├── manifest.json                # session config (see schema below)
 ├── session-id.txt               # one-line convenience copy of session UUID
-├── bootstrap.pid                # PID of detached bootstrap subprocess
-├── bootstrap.log                # subprocess stdout/stderr
+├── bootstrap.pid                # PID of bootstrap subprocess (informational; subprocess exits after install)
+├── bootstrap.log                # bootstrap subprocess stdout/stderr
 ├── cron.id                      # cron tool ID returned by CronCreate
 ├── tick.lock                    # session-busy indicator
 ├── state-snapshot.json          # rewritten by fry on build state changes
@@ -263,6 +266,7 @@ Messages you send become part of the conversation. The copilot logs them under "
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `copilot status` shows `STARTING` forever | bootstrap subprocess crashed before installing cron | check `.fry/copilot/bootstrap.log` |
+| `copilot status` shows `STALE` | cron was installed but the build process has died | the build itself stopped; check fry's main log and consider `fry run --continue` |
 | Session ID is `(pending)` | engine doesn't support `--session-id`; capture from stdout failed | check bootstrap.log for the result event; manifest will be updated when the agent emits it |
 | `attach` fails with "session ID is not yet captured" | bootstrap is still running | wait 30s and retry, or check bootstrap.log |
 | `attach` exits with code 3 | tick.lock is held by a live process | wait ~30s and retry, or use `--print-only` |

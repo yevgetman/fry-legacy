@@ -55,27 +55,30 @@ var copilotStatusCmd = &cobra.Command{
 
 		snapshot, _ := copilot.ReadStateSnapshot(dir)
 		busy := copilot.IsBusy(dir)
-		bootstrapPID := copilot.ReadBootstrapPID(dir)
-		bootstrapAlive := bootstrapPID > 0 && processAlive(bootstrapPID)
 		cronID := copilot.ReadCronIDFile(dir)
 		events, _ := copilot.ReadEvents(dir)
 		counts := copilot.CountEventsByType(events)
 
+		// Liveness derives from build PID + cron ID. The bootstrap
+		// subprocess is short-lived (claude -p exits after running the
+		// bootstrap prompt) — its PID is NOT a copilot-alive indicator.
+		// The cron is what keeps the session responsive across wakes.
+		buildAlive := manifest.BuildPID > 0 && processAlive(manifest.BuildPID)
+
 		if jsonOut {
 			return json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]any{
-				"status":          statusVerbForCronID(cronID, bootstrapAlive),
-				"manifest":        manifest,
-				"snapshot":        snapshot,
-				"busy":            busy,
-				"bootstrap_pid":   bootstrapPID,
-				"bootstrap_alive": bootstrapAlive,
-				"event_counts":    counts,
-				"event_total":     len(events),
+				"status":       statusVerbFromState(cronID, buildAlive),
+				"manifest":     manifest,
+				"snapshot":     snapshot,
+				"busy":         busy,
+				"build_alive":  buildAlive,
+				"event_counts": counts,
+				"event_total":  len(events),
 			})
 		}
 
 		out := cmd.OutOrStdout()
-		fmt.Fprintf(out, "Copilot status: %s\n", strings.ToUpper(statusVerbForCronID(cronID, bootstrapAlive)))
+		fmt.Fprintf(out, "Copilot status: %s\n", strings.ToUpper(statusVerbFromState(cronID, buildAlive)))
 		fmt.Fprintf(out, "  Engine:              %s", manifest.Engine)
 		if manifest.Model != "" {
 			fmt.Fprintf(out, " (%s)", manifest.Model)
@@ -88,16 +91,7 @@ var copilotStatusCmd = &cobra.Command{
 		fmt.Fprintf(out, "  Cron ID:             %s\n", displayValue(cronID))
 		fmt.Fprintf(out, "  Build PID:           %d", manifest.BuildPID)
 		if manifest.BuildPID > 0 {
-			if processAlive(manifest.BuildPID) {
-				fmt.Fprint(out, " (alive)")
-			} else {
-				fmt.Fprint(out, " (dead)")
-			}
-		}
-		fmt.Fprintln(out)
-		fmt.Fprintf(out, "  Bootstrap PID:       %d", bootstrapPID)
-		if bootstrapPID > 0 {
-			if bootstrapAlive {
+			if buildAlive {
 				fmt.Fprint(out, " (alive)")
 			} else {
 				fmt.Fprint(out, " (dead)")
@@ -127,8 +121,9 @@ var copilotStatusCmd = &cobra.Command{
 			fmt.Fprintf(out, "                       %s --resume %s\n", manifest.Engine, manifest.SessionID)
 		}
 
-		// Exit non-zero on stale state for scripting.
-		if cronID == "" && bootstrapAlive {
+		// Exit non-zero on stale state for scripting: cron file present but
+		// build process is dead.
+		if cronID != "" && !buildAlive {
 			return cobraExitWithCode(2)
 		}
 		return nil
@@ -182,8 +177,10 @@ var copilotAttachCmd = &cobra.Command{
 // ----- stop -----
 
 var copilotStopCmd = &cobra.Command{
-	Use:   "stop",
-	Short: "Request the copilot to exit cleanly (does NOT stop the build)",
+	Use:           "stop",
+	Short:         "Request the copilot to exit cleanly (does NOT stop the build)",
+	SilenceUsage:  true,
+	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		dir, _ := cmd.Flags().GetString("project-dir")
 		keepCron, _ := cmd.Flags().GetBool("keep-cron")
@@ -294,8 +291,10 @@ var copilotTailCmd = &cobra.Command{
 // ----- summary -----
 
 var copilotSummaryCmd = &cobra.Command{
-	Use:   "summary",
-	Short: "Print the copilot's final summary report",
+	Use:           "summary",
+	Short:         "Print the copilot's final summary report",
+	SilenceUsage:  true,
+	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		dir, _ := cmd.Flags().GetString("project-dir")
 		current, _ := cmd.Flags().GetBool("current")
@@ -332,7 +331,7 @@ func synthesizeCurrentSummary(cmd *cobra.Command, dir string) error {
 	fmt.Fprintf(out, "Session:     %s\n\n", displayValue(manifest.SessionID))
 	fmt.Fprintf(out, "## Activity counts\n\n")
 	for _, k := range sortedEventTypeKeys(counts) {
-		fmt.Fprintf(out, "  %-40s %d\n", k, counts[observer.EventType(k)])
+		fmt.Fprintf(out, "  %-40s %d\n", k, counts[k])
 	}
 	fmt.Fprintln(out)
 	if intervDir := filepath.Join(dir, config.CopilotInterventionsDir); fileExists(intervDir) {
@@ -348,8 +347,10 @@ func synthesizeCurrentSummary(cmd *cobra.Command, dir string) error {
 // ----- list-interventions -----
 
 var copilotListInterventionsCmd = &cobra.Command{
-	Use:   "list-interventions",
-	Short: "List all copilot intervention reports",
+	Use:           "list-interventions",
+	Short:         "List all copilot intervention reports",
+	SilenceUsage:  true,
+	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		dir, _ := cmd.Flags().GetString("project-dir")
 		intervDir := filepath.Join(dir, config.CopilotInterventionsDir)
@@ -384,8 +385,10 @@ var copilotListInterventionsCmd = &cobra.Command{
 // observer stream. It exists so the agent does not have to hand-roll JSONL
 // formatting.
 var copilotEmitEventCmd = &cobra.Command{
-	Use:   "emit-event",
-	Short: "Emit a structured copilot event (used by the copilot agent itself)",
+	Use:           "emit-event",
+	Short:         "Emit a structured copilot event (used by the copilot agent itself)",
+	SilenceUsage:  true,
+	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		dir, _ := cmd.Flags().GetString("project-dir")
 		typeStr, _ := cmd.Flags().GetString("type")
@@ -419,10 +422,10 @@ func processAlive(pid int) bool {
 		return false
 	}
 	err := syscall.Kill(pid, syscall.Signal(0))
-	if err != nil {
-		return !errors.Is(err, syscall.ESRCH)
+	if err == nil {
+		return true
 	}
-	return true
+	return errors.Is(err, syscall.EPERM)
 }
 
 func displayValue(s string) string {
@@ -439,22 +442,31 @@ func boolYesNo(b bool) string {
 	return "no"
 }
 
-func statusVerbForCronID(cronID string, bootstrapAlive bool) string {
-	if cronID == "" && !bootstrapAlive {
+// statusVerbFromState returns the human-readable session state.
+//
+//   - "absent"  : no cron has been installed and no build is alive
+//   - "starting": no cron yet but the build is alive (bootstrap in flight)
+//   - "stale"   : cron file exists but the build process has died
+//   - "active"  : cron installed and build alive
+func statusVerbFromState(cronID string, buildAlive bool) string {
+	switch {
+	case cronID == "" && !buildAlive:
 		return "absent"
-	}
-	if cronID == "" {
+	case cronID == "":
 		return "starting"
+	case !buildAlive:
+		return "stale"
+	default:
+		return "active"
 	}
-	return "active"
 }
 
-func sortedEventTypeKeys(m map[observer.EventType]int) []string {
-	keys := make([]string, 0, len(m))
+func sortedEventTypeKeys(m map[observer.EventType]int) []observer.EventType {
+	keys := make([]observer.EventType, 0, len(m))
 	for k := range m {
-		keys = append(keys, string(k))
+		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	sort.Slice(keys, func(i, j int) bool { return string(keys[i]) < string(keys[j]) })
 	return keys
 }
 
@@ -467,10 +479,22 @@ func cobraExitWithCode(code int) error {
 	return &exitError{code: code}
 }
 
+// ExitError is an error returned by a cobra subcommand to request a
+// specific process exit code. cmd/fry/main.go type-asserts against
+// ExitError to honour the requested code instead of always exiting with 1.
+type ExitError interface {
+	error
+	ExitCode() int
+}
+
 type exitError struct{ code int }
 
 func (e *exitError) Error() string {
 	return fmt.Sprintf("exit code %d", e.code)
+}
+
+func (e *exitError) ExitCode() int {
+	return e.code
 }
 
 func init() {

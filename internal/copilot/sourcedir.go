@@ -1,6 +1,8 @@
 package copilot
 
 import (
+	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -13,24 +15,36 @@ var FrySourceMarkerFiles = []string{
 	filepath.Join("internal", "cli", "run.go"),
 }
 
+// expectedModulePath is the Go module path declared in fry's go.mod. We
+// require it as a content check inside IsFrySourceDir so that arbitrary
+// directories with a go.mod and an internal/cli/run.go cannot masquerade
+// as a fry source tree.
+const expectedModulePath = "github.com/yevgetman/fry"
+
 // DiscoverFrySourceDir locates the fry source tree using a multi-strategy
 // search. The order is:
 //
 //  1. The override path passed by the caller (--copilot-fry-source flag).
 //  2. Walking up from os.Executable() — works when fry was `make install`'d
 //     from a working tree.
-//  3. The $FRY_SOURCE_DIR environment variable.
-//  4. Standard locations: ~/code/fry, ~/src/fry, ~/go/src/github.com/yevgetman/fry
+//  3. Walking up from the current working directory.
+//  4. The $FRY_SOURCE_DIR environment variable.
+//  5. Standard locations: ~/code/fry, ~/src/fry, ~/go/src/github.com/yevgetman/fry
 //
 // Returns the absolute path of the first match, or "" if no match is found.
 // Callers that get "" should fall back to copilot mode = passive (the
 // copilot can still observe and write summaries, just not edit fry source).
+//
+// If the explicit override is non-empty but does not satisfy IsFrySourceDir,
+// the function reports a non-fatal warning to stderr so the user knows
+// their flag was rejected before falling through.
 func DiscoverFrySourceDir(override string) string {
 	// 1. Explicit override
 	if override != "" {
 		if abs, err := filepath.Abs(override); err == nil && IsFrySourceDir(abs) {
 			return abs
 		}
+		fmt.Fprintf(os.Stderr, "fry: warning: --copilot-fry-source=%q is not a valid fry source tree, falling back to auto-detection\n", override)
 	}
 
 	// 2. Walk up from executable
@@ -76,9 +90,11 @@ func DiscoverFrySourceDir(override string) string {
 	return ""
 }
 
-// IsFrySourceDir reports whether path looks like the fry source tree —
-// every marker file in FrySourceMarkerFiles must exist as a regular file
-// directly under path.
+// IsFrySourceDir reports whether path looks like the fry source tree.
+// Every marker file in FrySourceMarkerFiles must exist as a regular file
+// directly under path, AND go.mod must declare expectedModulePath. The
+// content check prevents arbitrary projects with the same file layout
+// from being misidentified as fry.
 func IsFrySourceDir(path string) bool {
 	if path == "" {
 		return false
@@ -90,10 +106,11 @@ func IsFrySourceDir(path string) bool {
 			return false
 		}
 	}
-	// Sanity check: go.mod should mention the fry module path. We don't
-	// strictly require it (a fork or rename could be valid) but we use it
-	// as a tie-breaker if other heuristics matched ambiguously.
-	return true
+	gomod, err := os.ReadFile(filepath.Join(path, "go.mod"))
+	if err != nil {
+		return false
+	}
+	return bytes.Contains(gomod, []byte("module "+expectedModulePath))
 }
 
 // walkUp climbs the directory tree from start, returning the first ancestor

@@ -21,23 +21,23 @@ import (
 // agent-readable but verbose), this snapshot is intentionally compact
 // and tailored to the copilot's tick checklist.
 type StateSnapshot struct {
-	Timestamp                       string             `json:"ts"`
-	BuildPhase                      string             `json:"build_phase"`
-	BuildMode                       string             `json:"build_mode"`
-	BuildStatus                     string             `json:"build_status"`
-	CurrentSprint                   int                `json:"current_sprint"`
-	CurrentSprintName               string             `json:"current_sprint_name,omitempty"`
-	TotalSprints                    int                `json:"total_sprints"`
-	BuildPID                        int                `json:"build_pid"`
-	BuildPIDAlive                   bool               `json:"build_pid_alive"`
-	LockHeld                        bool               `json:"lock_held"`
-	StartedAt                       string             `json:"started_at,omitempty"`
-	LastUpdatedAt                   string             `json:"last_updated_at,omitempty"`
-	RecentEventCountSinceLastUpdate int                `json:"recent_event_count_since_last_snapshot"`
-	RecentEventsTail                []SnapshotEvent    `json:"recent_events_tail,omitempty"`
-	DeferredFailuresCount           int                `json:"deferred_failures_count"`
-	ActiveHealLoop                  bool               `json:"active_heal_loop"`
-	CurrentIterationLog             string             `json:"current_iteration_log,omitempty"`
+	Timestamp             string          `json:"ts"`
+	BuildPhase            string          `json:"build_phase"`
+	BuildMode             string          `json:"build_mode"`
+	BuildStatus           string          `json:"build_status"`
+	CurrentSprint         int             `json:"current_sprint"`
+	CurrentSprintName     string          `json:"current_sprint_name,omitempty"`
+	TotalSprints          int             `json:"total_sprints"`
+	BuildPID              int             `json:"build_pid"`
+	BuildPIDAlive         bool            `json:"build_pid_alive"`
+	LockHeld              bool            `json:"lock_held"`
+	StartedAt             string          `json:"started_at,omitempty"`
+	LastUpdatedAt         string          `json:"last_updated_at,omitempty"`
+	RecentEventTailLen    int             `json:"recent_event_tail_len"`
+	RecentEventsTail      []SnapshotEvent `json:"recent_events_tail,omitempty"`
+	DeferredFailuresCount int             `json:"deferred_failures_count"`
+	ActiveHealLoop        bool            `json:"active_heal_loop"`
+	CurrentIterationLog   string          `json:"current_iteration_log,omitempty"`
 }
 
 // SnapshotEvent is a trimmed event entry suitable for inlining into the
@@ -50,13 +50,6 @@ type SnapshotEvent struct {
 	Sprint    int                `json:"sprint,omitempty"`
 }
 
-const (
-	// snapshotEventTailMax is the cap on how many trailing events the
-	// snapshot includes. The copilot has independent access to the full
-	// stream — this tail is just a quick orientation aid.
-	snapshotEventTailMax = 12
-)
-
 // snapshotDebouncer enforces the 10s minimum-interval rule on
 // state-snapshot writes per project directory. The map key is the
 // absolute project path; the value is the time of the last successful
@@ -66,7 +59,7 @@ const (
 // that is intentional: a fresh fry process should always get one
 // immediate snapshot write so the copilot sees the new build state.
 type snapshotDebouncer struct {
-	mu       sync.Mutex
+	mu        sync.Mutex
 	lastWrite map[string]time.Time
 }
 
@@ -75,8 +68,9 @@ var globalDebouncer = &snapshotDebouncer{
 }
 
 // shouldWrite returns true if the debouncer permits a write for projectDir
-// at this moment, and records the new timestamp. Returns false if the
-// previous write was within the debounce window.
+// at this moment. The caller is responsible for calling recordWrite()
+// after a successful write — that way a failed write does not poison the
+// debounce window for subsequent retries.
 func (d *snapshotDebouncer) shouldWrite(projectDir string, now time.Time) bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -84,8 +78,15 @@ func (d *snapshotDebouncer) shouldWrite(projectDir string, now time.Time) bool {
 	if ok && now.Sub(last) < time.Duration(config.CopilotStateSnapshotDebounceSec)*time.Second {
 		return false
 	}
-	d.lastWrite[projectDir] = now
 	return true
+}
+
+// recordWrite stamps the debounce window for projectDir. Called by the
+// caller of shouldWrite() after the on-disk write returns nil.
+func (d *snapshotDebouncer) recordWrite(projectDir string, now time.Time) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.lastWrite[projectDir] = now
 }
 
 // WriteStateSnapshot rewrites .fry/copilot/state-snapshot.json from the
@@ -102,8 +103,7 @@ func (d *snapshotDebouncer) shouldWrite(projectDir string, now time.Time) bool {
 // phase_change, build_end. The debouncer collapses bursts.
 func WriteStateSnapshot(projectDir string) error {
 	// Skip silently if no copilot is configured for this build.
-	manifest, err := ReadManifest(projectDir)
-	if err != nil || manifest == nil {
+	if !CopilotConfigured(projectDir) {
 		return nil
 	}
 
@@ -112,29 +112,32 @@ func WriteStateSnapshot(projectDir string) error {
 		return nil
 	}
 
-	snap := buildSnapshot(projectDir, manifest, now)
-
-	data, err := json.MarshalIndent(snap, "", "  ")
-	if err != nil {
-		return fmt.Errorf("write state snapshot: marshal: %w", err)
+	if err := writeSnapshotNow(projectDir, now); err != nil {
+		return err
 	}
-	return atomicWriteSnapshot(projectDir, append(data, '\n'))
+	globalDebouncer.recordWrite(projectDir, now)
+	return nil
 }
 
 // ForceWriteStateSnapshot bypasses the debounce and writes unconditionally.
 // Used by tests and by code paths that need a guaranteed write — e.g.,
 // the bootstrap flow before the copilot's first cron wake fires.
 func ForceWriteStateSnapshot(projectDir string) error {
-	manifest, err := ReadManifest(projectDir)
-	if err != nil || manifest == nil {
+	if !CopilotConfigured(projectDir) {
 		return nil
 	}
 	now := time.Now().UTC()
-	globalDebouncer.mu.Lock()
-	globalDebouncer.lastWrite[projectDir] = now
-	globalDebouncer.mu.Unlock()
+	if err := writeSnapshotNow(projectDir, now); err != nil {
+		return err
+	}
+	globalDebouncer.recordWrite(projectDir, now)
+	return nil
+}
 
-	snap := buildSnapshot(projectDir, manifest, now)
+// writeSnapshotNow assembles and writes the snapshot to disk. Caller is
+// responsible for the manifest gate and debounce decisions.
+func writeSnapshotNow(projectDir string, now time.Time) error {
+	snap := buildSnapshot(projectDir, now)
 	data, err := json.MarshalIndent(snap, "", "  ")
 	if err != nil {
 		return fmt.Errorf("write state snapshot: marshal: %w", err)
@@ -160,10 +163,17 @@ func atomicWriteSnapshot(projectDir string, data []byte) error {
 
 // buildSnapshot reads canonical build state and assembles a fresh
 // StateSnapshot value. Pure function — performs no writes.
-func buildSnapshot(projectDir string, manifest *Manifest, now time.Time) StateSnapshot {
+//
+// BuildPID is taken from the *currently running* fry process via
+// os.Getpid(), NOT from the manifest. The manifest's BuildPID is set once
+// at Bootstrap() time and is not refreshed when the user resumes via
+// `fry run --continue`. Using the manifest's value would cause the
+// state-snapshot's `build_pid_alive` field to read `false` after a
+// resume, leading the copilot to incorrectly conclude the build has died.
+func buildSnapshot(projectDir string, now time.Time) StateSnapshot {
 	snap := StateSnapshot{
 		Timestamp: now.Format(time.RFC3339),
-		BuildPID:  manifest.BuildPID,
+		BuildPID:  os.Getpid(),
 	}
 
 	// Build phase / mode / status from .fry/build-status.json (canonical).
@@ -195,8 +205,8 @@ func buildSnapshot(projectDir string, manifest *Manifest, now time.Time) StateSn
 	snap.LockHeld = lock.IsLocked(projectDir)
 
 	// Recent event tail — load the canonical observer stream.
-	if events, err := observer.ReadRecentEvents(projectDir, snapshotEventTailMax); err == nil {
-		snap.RecentEventCountSinceLastUpdate = len(events)
+	if events, err := observer.ReadRecentEvents(projectDir, config.CopilotSnapshotEventTailMax); err == nil {
+		snap.RecentEventTailLen = len(events)
 		snap.RecentEventsTail = make([]SnapshotEvent, 0, len(events))
 		for _, e := range events {
 			snap.RecentEventsTail = append(snap.RecentEventsTail, SnapshotEvent{

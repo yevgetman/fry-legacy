@@ -25,20 +25,20 @@ type BootstrapOpts struct {
 	EpicName     string
 	EffortLevel  string
 	TotalSprints int
-	BuildPID     int    // PID of the running fry main process
-	Interval     string // human form, e.g. "10m"
-	RunID        string // build run ID, used in commit message provenance
-	Passive      bool   // force passive mode (no interventions)
-	DryRun       bool   // skip subprocess spawn
+	BuildPID     int       // PID of the running fry main process
+	Interval     string    // human form, e.g. "10m"
+	RunID        string    // build run ID, used in commit message provenance
+	Passive      bool      // force passive mode (no interventions)
+	DryRun       bool      // skip subprocess spawn
 	Stdout       io.Writer // optional; defaults to os.Stdout for the startup banner
 }
 
 // BootstrapResult is the outcome of a successful (or dry-run) bootstrap.
 type BootstrapResult struct {
-	Manifest        *Manifest
-	BootstrapPID    int    // PID of the spawned subprocess (0 in dry-run/passive)
+	Manifest         *Manifest
+	BootstrapPID     int // PID of the spawned subprocess (0 in dry-run/passive)
 	BootstrapLogPath string
-	BannerLines     []string // the lines that were printed to stdout
+	BannerLines      []string // the lines that were printed to stdout
 }
 
 // Bootstrap spawns the copilot subprocess (or skips spawning in dry-run/
@@ -140,11 +140,11 @@ func Bootstrap(opts BootstrapOpts) (*BootstrapResult, error) {
 
 	// Dry-run / passive: skip subprocess spawn entirely.
 	if mode == ModeDryRun {
-		writeBanner(opts.Stdout, manifest, "(dry-run, no subprocess spawned)")
+		result.BannerLines = writeBanner(opts.Stdout, manifest, "(dry-run, no subprocess spawned)")
 		return result, nil
 	}
 	if mode == ModePassive {
-		writeBanner(opts.Stdout, manifest, "(passive mode — no interventions)")
+		result.BannerLines = writeBanner(opts.Stdout, manifest, "(passive mode — no interventions)")
 		return result, nil
 	}
 
@@ -164,23 +164,13 @@ func Bootstrap(opts BootstrapOpts) (*BootstrapResult, error) {
 
 	// If session ID was not pre-specified, fall back to parsing stdout.
 	// We do not block forever — the subprocess is detached and may not
-	// surface a session ID for several seconds. Run capture in background.
-	if sessionID == "" {
-		// Background capture: in v1 we don't wait for the result; the
-		// startup banner shows "(pending)" and the actual ID will be
-		// written by the agent itself once it's known. This is a known
-		// limitation documented in the plan.
-		// TODO(v1.1): wait briefly and update manifest if found.
-	}
+	// surface a session ID for several seconds. The startup banner shows
+	// "(pending)" and the actual ID will be written by the agent itself
+	// once it's known.
+	// TODO(v1.1): wait briefly and update manifest if found.
 
-	// Now that the manifest has the bootstrap PID and any captured ID,
-	// rewrite it with the final values.
-	if err := WriteManifest(opts.ProjectDir, manifest); err != nil {
-		return nil, fmt.Errorf("bootstrap: rewrite manifest after spawn: %w", err)
-	}
 	_ = WriteSessionIDFile(opts.ProjectDir, sessionID)
-
-	writeBanner(opts.Stdout, manifest, "")
+	result.BannerLines = writeBanner(opts.Stdout, manifest, "")
 
 	return result, nil
 }
@@ -201,10 +191,10 @@ func validateBootstrapOpts(opts BootstrapOpts) error {
 	if err != nil {
 		return fmt.Errorf("bootstrap: invalid Interval %q: %w", opts.Interval, err)
 	}
-	min := time.Duration(config.CopilotMinIntervalSeconds) * time.Second
-	max := time.Duration(config.CopilotMaxIntervalSeconds) * time.Second
-	if d < min || d > max {
-		return fmt.Errorf("bootstrap: Interval %s out of range [%s, %s]", d, min, max)
+	minDur := time.Duration(config.CopilotMinIntervalSeconds) * time.Second
+	maxDur := time.Duration(config.CopilotMaxIntervalSeconds) * time.Second
+	if d < minDur || d > maxDur {
+		return fmt.Errorf("bootstrap: Interval %s out of range [%s, %s]", d, minDur, maxDur)
 	}
 	return nil
 }

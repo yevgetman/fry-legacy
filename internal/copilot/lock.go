@@ -21,8 +21,11 @@ type TickLockInfo struct {
 
 // AcquireTickLock claims the tick lock for the given PID. If the lock file
 // already exists and the recorded PID is alive, returns an error. If the
-// recorded PID is dead, the lock is silently stolen (the file is rewritten
-// with the new PID).
+// recorded PID is dead, the lock is silently stolen.
+//
+// Acquisition uses O_CREATE|O_EXCL for atomic claim — see
+// internal/lock/lock.go for the same pattern. Two competing processes
+// cannot both succeed, even if they observe a stale lock simultaneously.
 //
 // The lock file content is two lines:
 //
@@ -34,17 +37,58 @@ func AcquireTickLock(projectDir string, pid int) error {
 		return fmt.Errorf("acquire tick lock: create dir: %w", err)
 	}
 
-	// If a lock exists, check if the holder is alive.
-	if existing, err := readTickLockFile(lockPath); err == nil {
-		if existing.PID > 0 && processAlive(existing.PID) {
-			return fmt.Errorf("tick lock held by live PID %d (started %s)", existing.PID, existing.StartedAt.Format(time.RFC3339))
-		}
-		// Stale — fall through and rewrite below.
+	content := fmt.Sprintf("%d\n%s\n", pid, time.Now().UTC().Format(time.RFC3339))
+
+	// First try the atomic create. If the file exists, we fall through to
+	// the stale-detection branch.
+	if err := writeLockExcl(lockPath, content); err == nil {
+		return nil
+	} else if !os.IsExist(err) {
+		return fmt.Errorf("acquire tick lock: %w", err)
 	}
 
-	content := fmt.Sprintf("%d\n%s\n", pid, time.Now().UTC().Format(time.RFC3339))
-	if err := os.WriteFile(lockPath, []byte(content), 0o644); err != nil {
-		return fmt.Errorf("acquire tick lock: write: %w", err)
+	// Lock exists. Check if the holder is alive.
+	existing, readErr := readTickLockFile(lockPath)
+	if readErr == nil && existing.PID > 0 && processAlive(existing.PID) {
+		return fmt.Errorf("tick lock held by live PID %d (started %s)", existing.PID, existing.StartedAt.Format(time.RFC3339))
+	}
+
+	// Stale (or unreadable). Remove and retry the atomic create exactly
+	// once. Another process racing us to remove + recreate may win the
+	// O_EXCL — in that case we report "still held" and let the caller
+	// retry on its own schedule.
+	if err := os.Remove(lockPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("acquire tick lock: remove stale: %w", err)
+	}
+	if err := writeLockExcl(lockPath, content); err != nil {
+		if os.IsExist(err) {
+			// Lost the race; surface the new owner.
+			if existing, readErr := readTickLockFile(lockPath); readErr == nil && existing.PID > 0 {
+				return fmt.Errorf("tick lock raced; now held by PID %d", existing.PID)
+			}
+			return fmt.Errorf("tick lock raced; held by another process")
+		}
+		return fmt.Errorf("acquire tick lock: %w", err)
+	}
+	return nil
+}
+
+// writeLockExcl creates path with O_EXCL semantics, writing content. The
+// returned error matches os.IsExist when the file already exists.
+func writeLockExcl(path, content string) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	_, writeErr := f.WriteString(content)
+	closeErr := f.Close()
+	if writeErr != nil {
+		_ = os.Remove(path)
+		return writeErr
+	}
+	if closeErr != nil {
+		_ = os.Remove(path)
+		return closeErr
 	}
 	return nil
 }
@@ -104,13 +148,19 @@ func readTickLockFile(path string) (TickLockInfo, error) {
 	return info, nil
 }
 
-// processAlive uses signal 0 to check whether a process exists. Identical
-// to internal/lock/lock.go's processAlive helper but inlined here to keep
-// the copilot package self-contained.
+// processAlive uses signal 0 to check whether a process exists. The
+// process is treated as alive iff:
+//   - syscall.Kill returns nil (process exists, signalable), OR
+//   - syscall.Kill returns EPERM (process exists, not signalable by us).
+//
+// Any other error (ESRCH, EINVAL, …) means dead-or-unknown.
 func processAlive(pid int) bool {
-	err := syscall.Kill(pid, syscall.Signal(0))
-	if err != nil {
-		return !errors.Is(err, syscall.ESRCH)
+	if pid <= 0 {
+		return false
 	}
-	return true
+	err := syscall.Kill(pid, syscall.Signal(0))
+	if err == nil {
+		return true
+	}
+	return errors.Is(err, syscall.EPERM)
 }

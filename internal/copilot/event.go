@@ -18,10 +18,10 @@ import (
 // observer stream (.fry/observer/events.jsonl) so that `fry monitor` and
 // `fry events --follow` see copilot activity natively.
 type Event struct {
-	Timestamp string            `json:"ts"`
+	Timestamp string             `json:"ts"`
 	Type      observer.EventType `json:"type"`
-	Sprint    int               `json:"sprint,omitempty"`
-	Data      map[string]string `json:"data,omitempty"`
+	Sprint    int                `json:"sprint,omitempty"`
+	Data      map[string]string  `json:"data,omitempty"`
 }
 
 // EmitEvent writes evt to .fry/copilot/events.jsonl AND mirrors it into the
@@ -29,6 +29,12 @@ type Event struct {
 // it. Errors writing to either stream are returned but the function tries
 // hard to deliver to both — a failure on the copilot stream does not stop
 // it from also attempting the observer mirror.
+//
+// Concurrency note: each call performs an O_APPEND write of one JSON line.
+// POSIX guarantees write atomicity only up to PIPE_BUF (typically 4096
+// bytes), so callers should keep individual events well under that limit
+// to avoid interleaving when multiple processes append simultaneously.
+// In practice copilot events are <500 bytes.
 func EmitEvent(projectDir string, evt Event) error {
 	if evt.Timestamp == "" {
 		evt.Timestamp = time.Now().UTC().Format(time.RFC3339)

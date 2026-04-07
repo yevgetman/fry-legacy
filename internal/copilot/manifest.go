@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/yevgetman/fry/internal/config"
 )
@@ -158,14 +159,16 @@ func WriteSessionIDFile(projectDir, sessionID string) error {
 	return nil
 }
 
-// ReadSessionIDFile reads .fry/copilot/session-id.txt. Returns "" if missing.
+// ReadSessionIDFile reads .fry/copilot/session-id.txt. Returns "" if
+// missing. Trailing whitespace and newlines are stripped so the value can
+// be passed directly to `claude --resume <id>`.
 func ReadSessionIDFile(projectDir string) string {
 	path := filepath.Join(projectDir, config.CopilotSessionIDFile)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return ""
 	}
-	return string(data)
+	return strings.TrimSpace(string(data))
 }
 
 // WriteCronIDFile writes the cron-tool ID returned by CronCreate to
@@ -183,11 +186,13 @@ func WriteCronIDFile(projectDir, cronID string) error {
 }
 
 // ReadCronIDFile reads .fry/copilot/cron.id. Returns "" if missing.
+// Trailing whitespace and newlines are stripped so a file containing
+// only "\n" reads as empty (and therefore "no cron").
 func ReadCronIDFile(projectDir string) string {
 	path := filepath.Join(projectDir, config.CopilotCronIDFile)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return ""
 	}
-	return string(data)
+	return strings.TrimSpace(string(data))
 }
