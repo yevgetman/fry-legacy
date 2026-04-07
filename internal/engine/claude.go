@@ -27,7 +27,19 @@ func (e *ClaudeEngine) Run(ctx context.Context, prompt string, opts RunOpts) (st
 
 	err := cmd.Run()
 	exitCode := exitCodeFromError(err)
-	return buffer.String(), exitCode, err
+	output := buffer.String()
+
+	// Detect the well-known "Not logged in · Please run /login" output
+	// that claude emits when its session is missing or expired. Without
+	// this check, fry happily writes the auth error string into the
+	// triage decision file and AGENTS.md, then fails downstream with
+	// inscrutable validation errors. The wrapped error gives the user
+	// a clear, actionable top-level message instead.
+	if looksLikeNotLoggedIn(output, claudeNotLoggedInPatterns) {
+		return output, exitCode, wrapNotAuthenticated("claude", output, "claude /login")
+	}
+
+	return output, exitCode, err
 }
 
 func (e *ClaudeEngine) Name() string {
