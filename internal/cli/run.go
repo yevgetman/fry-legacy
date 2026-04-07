@@ -215,6 +215,27 @@ var runCmd = &cobra.Command{
 			return err
 		}
 
+		// Acquire the build lock as early as possible so that prepare and
+		// triage are mutually exclusive across concurrent fry invocations,
+		// and so `fry status` can correctly report "Build in progress"
+		// during those phases (which write to .fry/ before the run loop).
+		// lockDir captures the original project path at acquisition time so
+		// the release path is robust against any later worktree-redirect
+		// reassignment of originalProjectPath.
+		lockDir := originalProjectPath
+		if err := lock.AcquireIfNotDryRun(lockDir, runDryRun); err != nil {
+			return err
+		}
+		var lockOnce sync.Once
+		releaseLock := func() {
+			lockOnce.Do(func() {
+				if err := lock.Release(lockDir); err != nil {
+					fmt.Fprintf(os.Stderr, "fry: warning: %v\n", err)
+				}
+			})
+		}
+		defer releaseLock()
+
 		printMigrationHintIfNeeded(cmd.OutOrStdout(), projectPath, epicArg)
 
 		if runTriageOnly && epicExists {
@@ -563,19 +584,6 @@ var runCmd = &cobra.Command{
 				}
 			}()
 		}
-
-		if err := lock.AcquireIfNotDryRun(originalProjectPath, runDryRun); err != nil {
-			return err
-		}
-		var lockOnce sync.Once
-		releaseLock := func() {
-			lockOnce.Do(func() {
-				if err := lock.Release(originalProjectPath); err != nil {
-					fmt.Fprintf(os.Stderr, "fry: warning: %v\n", err)
-				}
-			})
-		}
-		defer releaseLock()
 
 		results := initializeSprintResults(ep, startSprint, endSprint)
 		var mu sync.Mutex
