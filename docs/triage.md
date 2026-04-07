@@ -168,3 +168,27 @@ The classifier adjusts its criteria based on `--mode`:
 - `--triage-only`: runs only the classification (and optional interactive confirmation), prints the result, and exits. No epic, sanity checks, or AGENTS.md files are generated. Cannot be combined with `--full-prepare`, `--continue`, `--resume`, or `--simple-continue`. Triage diagnostic files (`.fry/triage-prompt.md`, `.fry/triage-decision.txt`) are still written.
 - `--no-audit`: disables the triage-path build audit too.
 - `--no-project-overview`: skips the interactive triage confirmation and the prepare project overview on the complex path.
+- `--copilot` / `--no-copilot`: when triage classifies a build as `max` effort, the [copilot](copilot.md) auto-enables on the resulting build run (the generated epic gets `@effort max` baked in, and the run-time check at the start of the sprint loop fires the bootstrap). Pass `--no-copilot` if you want triage to proceed at max effort without the copilot. Pass `--copilot` explicitly if you want the copilot regardless of triage's effort classification.
+
+## Triage and the Copilot
+
+If you do not pass `--effort` and let triage decide, a `complex` classification typically yields `max` effort, which in turn auto-enables the [copilot](copilot.md). This means a single `fry run` invocation against a complex project produces both:
+
+1. A `max`-effort epic with extended sprints, thorough reviews, and full audit cycles.
+2. A parallel copilot session that monitors the build and intervenes for canonical fry bugs or broken artifact state.
+
+If you want this combination explicitly without trusting triage:
+
+```bash
+fry run --effort=max --copilot
+```
+
+If you want to opt out of the copilot even when triage decides max:
+
+```bash
+fry run --no-copilot
+# or, if you also want to override the effort classification:
+fry run --effort=high --no-copilot
+```
+
+See [Effort Levels](effort-levels.md#max-effort-and-the-copilot) for the full auto-enable matrix.

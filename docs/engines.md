@@ -222,6 +222,27 @@ Pass extra CLI flags to the underlying engine:
 
 These flags are appended to the engine invocation command.
 
+## Copilot Engine Selection
+
+The [copilot](copilot.md) is an independent engine session from the build. It can use a different engine than the one running the build:
+
+```bash
+fry run --engine=codex --copilot=claude     # build runs on codex; copilot runs on claude
+fry run --engine=claude --copilot=codex     # build runs on claude; copilot runs on codex
+fry run --copilot                           # both default to claude
+fry run --copilot=auto                      # copilot inherits the build engine
+```
+
+Engine compatibility for the copilot:
+
+| Engine | Persistent session mechanism | Notes |
+|---|---|---|
+| `claude` | `CronCreate` tool — the bootstrap subprocess installs a recurring schedule and exits; each tick spawns a new `claude --resume <session-id>` invocation | Recommended. Crash-resilient: copilot survives if fry main dies. |
+| `codex` | In-process tick scheduler in fry main | Documented limitation: copilot dies when fry main dies. Useful when you must run the copilot on a Codex-only environment. |
+| `ollama` | Not supported | The copilot bootstrap will fall back to claude with a warning. |
+
+The copilot engine and the build engine are resolved independently — they have separate `engine.RunOpts` and separate session IDs. See [Copilot](copilot.md) for the full feature documentation.
+
 ## Engine Interface
 
 Internally, all three engines implement the same interface:

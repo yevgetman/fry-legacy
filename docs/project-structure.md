@@ -55,6 +55,21 @@ your-project/
       events.jsonl                       #     Structured event stream (JSONL)
       scratchpad.md                      #     Working memory (reset each build)
       wake-prompt.md                     #     Transient wake-up prompt (deleted after use)
+    copilot/                             #   Copilot session (only when --copilot or auto-enabled at max effort)
+      manifest.json                      #     Session config: engine, session ID, mode, capabilities
+      session-id.txt                     #     One-line session UUID for `claude --resume`
+      cron.id                            #     Cron tool ID returned by CronCreate
+      state-snapshot.json                #     Compact build state — atomic + 10s-debounced rewrite
+      events.txt                         #     Human-readable narrative event log
+      events.jsonl                       #     Structured event stream (mirrored into observer)
+      scratchpad.md                      #     Working memory across wakes
+      interventions/                     #     Per-intervention markdown reports (NNNN-<slug>.md)
+      final-summary.md                   #     Final summary written on clean exit
+      bootstrap.log                      #     Bootstrap subprocess stdout/stderr
+      tick.lock                          #     Tick-busy indicator (PID + timestamp)
+      stop-requested                     #     Flag from `fry copilot stop`
+      prompts/                           #     Rendered prompt files (bootstrap.md, summary.md)
+      archive/                           #     Past completed copilot sessions
     build-status.json                     #   Machine-readable status snapshot for agent polling (latest-run pointer)
     build-phase.txt                      #   Current build phase (triage, prepare, sprint, audit, build-audit, complete, failed)
     runs/                                #   Per-run immutable status snapshots
@@ -124,6 +139,19 @@ To scaffold this structure in a new project, run `fry init`. This creates `plans
 | `.fry/observer/events.jsonl` | Observer event stream (JSONL, reset only for a new logical session) | `fry run` at runtime |
 | `.fry/observer/scratchpad.md` | Observer working memory (preserved on resume) | `fry run` at runtime |
 | `.fry/observer/wake-prompt.md` | Observer wake-up prompt (transient, deleted after use) | `fry run` at runtime |
+| `.fry/copilot/manifest.json` | Copilot session config: engine, session ID, mode, capabilities (only when copilot is enabled) | `fry run --copilot` or `--effort=max` at runtime |
+| `.fry/copilot/session-id.txt` | One-line session UUID for `claude --resume` | `fry run --copilot` at runtime |
+| `.fry/copilot/cron.id` | Cron tool ID returned by `CronCreate` | written by the copilot agent itself |
+| `.fry/copilot/state-snapshot.json` | Compact build state — atomic + 10s-debounced rewrite by fry main on every observer wake-point | `fry run --copilot` at runtime |
+| `.fry/copilot/events.txt` | Copilot human-readable narrative event log | `fry run --copilot` at runtime |
+| `.fry/copilot/events.jsonl` | Copilot structured event stream (also mirrored into `.fry/observer/events.jsonl`) | `fry run --copilot` at runtime |
+| `.fry/copilot/scratchpad.md` | Copilot working memory across wakes | written by the copilot agent itself |
+| `.fry/copilot/interventions/` | Per-intervention markdown reports written by the copilot agent | written by the copilot agent itself |
+| `.fry/copilot/final-summary.md` | Final summary written on clean exit | written by the copilot agent itself |
+| `.fry/copilot/bootstrap.log` | Bootstrap subprocess stdout/stderr | `fry run --copilot` at runtime |
+| `.fry/copilot/tick.lock` | Tick busy indicator (PID + timestamp) | written by the copilot agent itself |
+| `.fry/copilot/stop-requested` | Flag from `fry copilot stop` requesting clean exit | `fry copilot stop` |
+| `.fry/copilot/archive/<run-id>/` | Archived past copilot sessions (after clean exit) | `fry run` at exit time |
 | `.fry/consciousness/session.json` | Durable consciousness session state | `fry run` at runtime |
 | `.fry/consciousness/checkpoints.jsonl` | Append-only checkpoint log | `fry run` at runtime |
 | `.fry/consciousness/checkpoints/` | Per-checkpoint durable records | `fry run` at runtime |

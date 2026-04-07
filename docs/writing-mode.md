@@ -66,6 +66,14 @@ your-project/
 | Audit criteria | Correctness, Security, Performance, Code Quality, Usability, Edge Cases | Domain-specific | Coherence, Accuracy, Completeness, Tone & Voice, Structure, Depth |
 | Alignment instructions | Fix code, resolve build errors | Fix document gaps | Fix content gaps, improve prose |
 
+## Copilot in Writing Mode
+
+The [copilot](copilot.md) is mode-agnostic. When enabled (via `--copilot` or auto-enabled at `--effort=max`), it monitors writing-mode builds the same way it monitors software builds: tick on a cron, re-read the state snapshot, intervene only when something is genuinely stuck. Writing builds rarely need fry-source bug fixes (the build agent is doing prose work, not invoking compilers), so most copilot interventions in writing mode are artifact remediations — for example, cleaning up a partially-written `manuscript.md` that left a section in an inconsistent state, or answering a `decision-needed.md` request mid-build.
+
+```bash
+fry --mode writing --effort max --copilot --user-prompt "Write a 5,000-word essay on…"
+```
+
 ## Sanity Checks
 
 The same four [sanity check primitives](sanity-checks.md) work for writing-mode deliverables. Typical checks focus on file existence, heading structure, and word count minimums rather than builds or test suites.

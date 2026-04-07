@@ -243,3 +243,5 @@ fry run --continue
 fry run --simple-continue
 fry run --resume --sprint N
 ```
+
+The [copilot](copilot.md), when enabled, may issue `fry exit` + `fry run --continue` from outside the build process if it determines that a fry-source bug fix needs the running build to pick up a freshly installed binary. This is the **RESTART-WITH-NEW-BINARY** procedure documented in `docs/copilot.md`. From the build's perspective the restart is indistinguishable from a manual `fry exit` followed by `fry run --continue` — the same `.fry/resume-point.json` settled state is used.

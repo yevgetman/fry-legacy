@@ -207,6 +207,7 @@ When no effort level is set (auto-detect or unset), the default max iterations p
 | Resume alignment attempts | 6 | 6 | 20 | 6 (min) |
 | Compact with agent | Default | Default | Default | Enabled |
 | Observer wake-ups | Disabled | Build end only | After sprint + build audit + build end | After sprint + build audit + build end |
+| Copilot ([copilot.md](copilot.md)) | Off (opt-in via `--copilot`) | Off (opt-in via `--copilot`) | Off (opt-in via `--copilot`) | **Auto-enabled** (override with `--no-copilot`) |
 
 ## Writing Mode
 
@@ -257,4 +258,30 @@ fry --engine claude
 # Correctness is critical — financial transactions, compliance requirements
 fry --effort max --engine claude
 # Result: 7 sprints with extended prompts, thorough reviews, 40+ iterations each
+# Also auto-enables the copilot — see Max Effort and the Copilot below
 ```
+
+## Max Effort and the Copilot
+
+`max` effort is the only level where the [copilot](copilot.md) auto-enables. The copilot is a parallel persistent agent session that wakes on a cron (default every 10 minutes) to monitor the build, fix canonical fry bugs in the source tree, and unstick broken build artifacts. It is reserved for `max` because the cost of keeping a second agent session running is non-trivial and rarely worth it for shorter builds.
+
+The auto-enable rule:
+
+| Condition | Result |
+|---|---|
+| `--effort=max` AND no `--copilot` flag AND no `--no-copilot` flag | Copilot auto-enables (engine: `claude`, default interval `10m`) |
+| `--effort=max --no-copilot` | Copilot stays off |
+| `--effort=max --copilot` | Copilot enabled (no behavioral change — already on) |
+| `--effort=max --copilot=codex` | Copilot enabled with codex engine instead of claude |
+| Any lower effort + no `--copilot` | Copilot stays off |
+| Any lower effort + `--copilot` | Copilot enabled |
+
+The same rule applies when [triage](triage.md) auto-classifies a build as `max` effort: the triage decision writes `@effort max` into the generated epic, the parser sets `ep.EffortLevel = max`, and the copilot bootstrap fires.
+
+When auto-enable triggers you'll see:
+
+```
+COPILOT: auto-enabled for max effort (use --no-copilot to disable)
+```
+
+in the build log, followed by the copilot's startup banner with the session ID and attach instructions.

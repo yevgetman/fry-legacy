@@ -161,6 +161,36 @@ The monitor polls these artifacts with change detection to minimize syscalls:
 
 **Polling cost when idle**: ~9 syscalls per tick (mostly `Stat` calls). After 10 unchanged ticks the interval slows from 2s to 5s automatically.
 
+## Copilot Events
+
+When [the copilot](copilot.md) is enabled (via `--copilot` or auto-enabled at `--effort=max`), the copilot agent emits structured events that are mirrored into the canonical observer stream at `.fry/observer/events.jsonl`. The monitor renders them natively alongside normal build events:
+
+| Event type | When emitted |
+|---|---|
+| `copilot_bootstrap` | Initial spawn — copilot session created |
+| `copilot_cron_installed` | Bootstrap subprocess installed its recurring schedule |
+| `copilot_wake_start` / `copilot_wake_end` | Per-tick begin/end (every 10m by default) |
+| `copilot_anomaly_detected` | The copilot identified a pattern worth investigating |
+| `copilot_intervention_started` / `copilot_intervention_completed` / `copilot_intervention_failed` | Per-intervention lifecycle |
+| `copilot_fry_bug_fix` | The copilot edited the fry source tree |
+| `copilot_make_install` | The copilot ran `make install` after a fry-source fix |
+| `copilot_git_push` | The copilot pushed a `[copilot]` commit to origin |
+| `copilot_artifact_remediate` | The copilot edited a build artifact (Prisma, decision-needed, etc.) |
+| `copilot_build_restart` | The copilot called `fry exit` + `fry run --continue` to deploy a new binary |
+| `copilot_final_summary` | Final summary written; copilot session ending |
+| `copilot_cron_removed` | Cron deleted (clean exit) |
+| `copilot_escalation` | The copilot is stuck after multiple intervention attempts |
+
+To watch only copilot activity:
+
+```bash
+fry copilot tail --follow                  # human-readable narrative
+fry copilot tail --follow --jsonl          # structured event stream
+fry monitor --json | jq 'select(.event.type | startswith("copilot_"))'
+```
+
+See [Copilot](copilot.md) for the full event taxonomy and intervention procedures.
+
 ## Lifecycle Handling
 
 | Build State | Monitor Behavior |

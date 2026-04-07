@@ -936,13 +936,54 @@ fry copilot emit-event --type=<type> --data=<json>   # internal helper used BY t
 
 ### Examples
 
+#### Starting a build with the copilot
+
+```bash
+# Force copilot on at any effort level (default engine: claude)
+fry run --copilot
+
+# Pick a specific engine (claude is default; codex falls back to in-process scheduler)
+fry run --copilot=claude
+fry run --copilot=codex
+
+# Trust triage to decide — copilot auto-enables iff triage classifies as max
+fry run
+
+# Force max effort + copilot explicitly (belt and braces)
+fry run --effort=max --copilot
+
+# Run at max effort but explicitly opt OUT of copilot
+fry run --effort=max --no-copilot
+
+# Custom wake interval (default 10m, range 1m–1h)
+fry run --copilot --copilot-interval=15m
+
+# Explicit fry source dir (default: auto-detected from $FRY_SOURCE_DIR or standard locations)
+fry run --copilot --copilot-fry-source=/Users/julie/code/fry
+
+# Override the copilot agent model
+fry run --copilot --copilot-model=opus[1m]
+
+# Passive mode: events + summary only, no interventions
+fry run --copilot --copilot-passive
+
+# Print the final summary to stdout when fry exits
+fry run --copilot --copilot-print-summary
+
+# Realistic unattended invocation
+fry run --copilot --effort=max -y --json-report --project-dir /path/to/project
+```
+
+#### Inspecting and controlling a running copilot
+
 ```bash
 # Check what the copilot is up to
 fry copilot status
 fry copilot status --json | jq .manifest.session_id
 
 # Watch live activity
-fry copilot tail --follow
+fry copilot tail --follow                  # human-readable narrative log
+fry copilot tail --follow --jsonl          # structured event stream
 
 # Open a Claude Code session connected to the copilot
 fry copilot attach
@@ -950,10 +991,15 @@ fry copilot attach --print-only | bash    # for tmux/IDE integration
 
 # Ask the copilot to wind down without stopping the build
 fry copilot stop
+fry copilot stop --keep-cron              # leave the cron in place
 
 # Read the final report after the build ends
 fry copilot summary
+fry copilot summary --current             # synthesize an in-progress summary if no final yet
+fry copilot list-interventions            # list every intervention report
 ```
+
+See [Copilot](copilot.md) for the full feature documentation, intervention procedures, and architecture.
 
 ---
 

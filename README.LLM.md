@@ -569,18 +569,25 @@ Key flags:
 | `CopilotDir` | `.fry/copilot` | Copilot session directory |
 | `CopilotManifestFile` | `.fry/copilot/manifest.json` | Copilot session config |
 | `CopilotSessionIDFile` | `.fry/copilot/session-id.txt` | Session UUID convenience copy |
+| `CopilotBootstrapPIDFile` | `.fry/copilot/bootstrap.pid` | Bootstrap subprocess PID (informational; subprocess exits after install) |
+| `CopilotBootstrapLogFile` | `.fry/copilot/bootstrap.log` | Bootstrap subprocess stdout/stderr |
 | `CopilotCronIDFile` | `.fry/copilot/cron.id` | Cron tool ID returned by CronCreate |
 | `CopilotStateSnapshotFile` | `.fry/copilot/state-snapshot.json` | Compact build state for the agent |
+| `CopilotBootstrapPromptFile` | `.fry/copilot/prompts/bootstrap.md` | Rendered bootstrap prompt |
+| `CopilotSummaryPromptFile` | `.fry/copilot/prompts/summary.md` | Rendered summary prompt (recovery path) |
 | `CopilotEventsTextFile` | `.fry/copilot/events.txt` | Human-readable narrative log |
 | `CopilotEventsJSONLFile` | `.fry/copilot/events.jsonl` | Structured event stream |
 | `CopilotInterventionsDir` | `.fry/copilot/interventions` | Per-intervention markdown reports |
 | `CopilotFinalSummaryFile` | `.fry/copilot/final-summary.md` | Final summary on clean exit |
+| `CopilotArchiveDir` | `.fry/copilot/archive` | Archived past copilot sessions |
 | `CopilotTickLockFile` | `.fry/copilot/tick.lock` | Tick busy indicator |
 | `CopilotStopRequestedFile` | `.fry/copilot/stop-requested` | Flag from `fry copilot stop` |
 | `CopilotDefaultIntervalMinutes` | `10` | Default cron wake interval |
 | `CopilotMinIntervalSeconds` | `60` | Minimum interval (1m) |
 | `CopilotMaxIntervalSeconds` | `3600` | Maximum interval (1h) |
+| `CopilotStateSnapshotDebounceSec` | `10` | Min seconds between state-snapshot writes |
 | `CopilotMaxInterventionsPerClass` | `3` | Per-class intervention cap before escalation |
+| `CopilotSnapshotEventTailMax` | `12` | Max trailing events inlined into the state snapshot |
 | `IdentityCoreFile` | `identity/core.md` | Core identity (go:embed path) |
 | `IdentityDispositionFile` | `identity/disposition.md` | Disposition (go:embed path) |
 | `IdentityDomainsDir` | `identity/domains` | Domain files directory (go:embed path) |

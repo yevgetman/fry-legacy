@@ -94,7 +94,12 @@ fry --engine claude
 fry --effort fast
 
 # For a critical build, use max effort (extended prompts, thorough reviews)
+# This also auto-enables the build copilot — see step 5 below
 fry --effort max --engine claude
+
+# Force the copilot at any effort level (a parallel agent that monitors
+# the build and intervenes for canonical fry bugs)
+fry --copilot
 ```
 
 Fry will automatically:
@@ -130,6 +135,31 @@ Continue: fry run --continue
 - **Resume** (no flags) — re-run the sprint from scratch if the approach was fundamentally wrong.
 
 See [Alignment](alignment.md) for details.
+
+### 5. Optional: enable the build copilot
+
+For long, complex, or unattended builds you can enable the [copilot](copilot.md) — a parallel agent session that wakes on a cron and intervenes when something goes wrong:
+
+```bash
+# Force on at any effort level
+fry --copilot
+
+# Auto-enabled when --effort=max
+fry --effort=max
+
+# Combine with --yes for fully unattended runs
+fry --copilot --effort=max -y
+```
+
+While the build runs, in a separate terminal:
+
+```bash
+fry copilot status              # one-shot snapshot of the copilot session
+fry copilot tail --follow       # live narrative log
+fry copilot attach              # exec into the live Claude Code session
+```
+
+The copilot auto-enables at `--effort=max`. Pass `--no-copilot` to opt out at any effort level. See [Copilot](copilot.md) for the full feature documentation.
 
 ## Adding Fry to an Existing Project
 

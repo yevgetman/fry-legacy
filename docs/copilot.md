@@ -115,6 +115,34 @@ fry run --no-copilot                   # explicit opt-out (overrides max-effort 
 
 `--copilot` is auto-enabled at `--effort=max` unless `--no-copilot` is passed.
 
+### Common invocation patterns
+
+| Goal | Command |
+|---|---|
+| Force copilot on at any effort level | `fry run --copilot` |
+| Explicit engine choice | `fry run --copilot=claude` or `--copilot=codex` |
+| Trust [triage](triage.md) to decide — copilot auto-enables iff triage classifies as max | `fry run` |
+| Force max effort + copilot (belt-and-braces) | `fry run --effort=max --copilot` |
+| Run at max effort but explicitly opt out of copilot | `fry run --effort=max --no-copilot` |
+| Copilot with custom cadence and explicit fry source dir | `fry run --copilot --copilot-interval=15m --copilot-fry-source=/Users/julie/code/fry` |
+| Passive observation only (no interventions, just summary) | `fry run --copilot --copilot-passive` |
+| Print the final summary to stdout when fry exits | `fry run --copilot --copilot-print-summary` |
+| Realistic unattended invocation against a real project | `fry run --copilot --effort=max -y --json-report` |
+
+While the build runs, in a separate terminal:
+
+```bash
+fry copilot status              # one-shot snapshot of the copilot session
+fry copilot status --json       # machine-readable; pipe to jq
+fry copilot tail --follow       # live narrative log (events.txt)
+fry copilot tail --follow --jsonl   # structured event stream
+fry copilot attach              # exec into the live Claude Code session
+fry copilot attach --print-only # print the attach command without exec'ing
+fry copilot stop                # ask copilot to exit cleanly (does NOT stop the build)
+fry copilot summary             # print final-summary.md (after build completes)
+fry copilot list-interventions  # list every intervention report
+```
+
 ### Subcommands
 
 ```

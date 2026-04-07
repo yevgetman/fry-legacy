@@ -243,6 +243,7 @@ build_audit_20060102_150405.log
 
 - **`fast`** -- Build audit is skipped entirely, matching sprint audit behavior.
 - **`standard`**, **`high`**, **`max`** -- Build audit runs when the epic completes successfully.
+- **`max`** also auto-enables the [copilot](copilot.md). When the build audit runs, the copilot's most recent state-snapshot tick will see the `build_audit_done` event and may decide to intervene if the audit reveals canonical fry bugs that the copilot can fix in the fry source tree itself. Build-audit findings about the project's own code are not in the copilot's authority — only fry-source bugs and broken artifact state.
 
 ## Relationship to Sprint Audit
 
