@@ -47,8 +47,13 @@ func runCheck(ctx context.Context, check Check, projectDir string) CheckResult {
 
 	switch check.Type {
 	case CheckFile:
+		// `@check_file` means "this path exists and is a regular file."
+		// Do NOT require info.Size() > 0 — that breaks legitimately empty
+		// placeholder files like .gitkeep, .keep, and .touch markers, and
+		// forces alignment agents to write garbage bytes into them. Users
+		// who need "exists and non-empty" should use @check_file_contains.
 		info, err := os.Stat(filepath.Join(projectDir, check.Path))
-		result.Passed = err == nil && info.Size() > 0
+		result.Passed = err == nil && !info.IsDir()
 	case CheckFileContains:
 		checkCtx, checkCancel := context.WithTimeout(ctx, defaultCheckTimeout)
 		defer checkCancel()

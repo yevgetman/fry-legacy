@@ -112,20 +112,23 @@ func TestRunChecksFile(t *testing.T) {
 	projectDir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(projectDir, "present.txt"), []byte("ok"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(projectDir, "empty.txt"), nil, 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(projectDir, "dir"), 0o755))
 
 	checks := []Check{
 		{Sprint: 1, Type: CheckFile, Path: "present.txt"},
 		{Sprint: 1, Type: CheckFile, Path: "missing.txt"},
-		{Sprint: 1, Type: CheckFile, Path: "empty.txt"},
+		{Sprint: 1, Type: CheckFile, Path: "empty.txt"}, // .gitkeep semantics: empty must pass
+		{Sprint: 1, Type: CheckFile, Path: "dir"},       // directory must NOT pass @check_file
 	}
 
 	results, passCount, totalCount := RunChecks(context.Background(), checks, 1, projectDir)
-	require.Len(t, results, 3)
-	assert.Equal(t, 1, passCount)
-	assert.Equal(t, 3, totalCount)
-	assert.True(t, results[0].Passed)
-	assert.False(t, results[1].Passed)
-	assert.False(t, results[2].Passed)
+	require.Len(t, results, 4)
+	assert.Equal(t, 2, passCount)
+	assert.Equal(t, 4, totalCount)
+	assert.True(t, results[0].Passed, "non-empty file should pass")
+	assert.False(t, results[1].Passed, "missing file should fail")
+	assert.True(t, results[2].Passed, "empty file (.gitkeep style) should pass")
+	assert.False(t, results[3].Passed, "directory should fail @check_file")
 }
 
 func TestRunChecksCmd(t *testing.T) {
@@ -499,9 +502,9 @@ func TestRunChecks_NoMatchingSprint(t *testing.T) {
 	assert.Empty(t, results)
 }
 
-// --- P1: CheckFile zero-size ---
+// --- CheckFile semantics: empty files (e.g. .gitkeep) must pass ---
 
-func TestRunCheck_CheckFileZeroSize(t *testing.T) {
+func TestRunCheck_CheckFileZeroSize_Passes(t *testing.T) {
 	t.Parallel()
 
 	projectDir := t.TempDir()
@@ -511,8 +514,8 @@ func TestRunCheck_CheckFileZeroSize(t *testing.T) {
 		{Sprint: 1, Type: CheckFile, Path: "empty.txt"},
 	}
 	results, pass, _ := RunChecks(context.Background(), checks, 1, projectDir)
-	assert.Equal(t, 0, pass, "zero-size file should not pass CheckFile")
-	assert.False(t, results[0].Passed)
+	assert.Equal(t, 1, pass, "zero-size file should pass CheckFile (.gitkeep style)")
+	assert.True(t, results[0].Passed)
 }
 
 func TestParseVerificationCheckTest(t *testing.T) {
