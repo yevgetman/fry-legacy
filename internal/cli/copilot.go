@@ -17,6 +17,7 @@ import (
 
 	"github.com/yevgetman/fry/internal/config"
 	"github.com/yevgetman/fry/internal/copilot"
+	"github.com/yevgetman/fry/internal/git"
 	"github.com/yevgetman/fry/internal/observer"
 )
 
@@ -39,6 +40,7 @@ var copilotStatusCmd = &cobra.Command{
 	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		dir, _ := cmd.Flags().GetString("project-dir")
+		dir = resolveCopilotProjectDir(dir)
 		jsonOut, _ := cmd.Flags().GetBool("json")
 
 		manifest, err := copilot.ReadManifest(dir)
@@ -139,6 +141,7 @@ var copilotAttachCmd = &cobra.Command{
 	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		dir, _ := cmd.Flags().GetString("project-dir")
+		dir = resolveCopilotProjectDir(dir)
 		printOnly, _ := cmd.Flags().GetBool("print-only")
 
 		manifest, err := copilot.ReadManifest(dir)
@@ -183,6 +186,7 @@ var copilotStopCmd = &cobra.Command{
 	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		dir, _ := cmd.Flags().GetString("project-dir")
+		dir = resolveCopilotProjectDir(dir)
 		keepCron, _ := cmd.Flags().GetBool("keep-cron")
 
 		manifest, err := copilot.ReadManifest(dir)
@@ -224,6 +228,7 @@ var copilotTailCmd = &cobra.Command{
 	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		dir, _ := cmd.Flags().GetString("project-dir")
+		dir = resolveCopilotProjectDir(dir)
 		follow, _ := cmd.Flags().GetBool("follow")
 		jsonl, _ := cmd.Flags().GetBool("jsonl")
 
@@ -297,6 +302,7 @@ var copilotSummaryCmd = &cobra.Command{
 	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		dir, _ := cmd.Flags().GetString("project-dir")
+		dir = resolveCopilotProjectDir(dir)
 		current, _ := cmd.Flags().GetBool("current")
 
 		path := filepath.Join(dir, config.CopilotFinalSummaryFile)
@@ -353,6 +359,7 @@ var copilotListInterventionsCmd = &cobra.Command{
 	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		dir, _ := cmd.Flags().GetString("project-dir")
+		dir = resolveCopilotProjectDir(dir)
 		intervDir := filepath.Join(dir, config.CopilotInterventionsDir)
 		entries, err := os.ReadDir(intervDir)
 		if err != nil {
@@ -391,6 +398,7 @@ var copilotEmitEventCmd = &cobra.Command{
 	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		dir, _ := cmd.Flags().GetString("project-dir")
+		dir = resolveCopilotProjectDir(dir)
 		typeStr, _ := cmd.Flags().GetString("type")
 		dataStr, _ := cmd.Flags().GetString("data")
 
@@ -416,6 +424,73 @@ var copilotEmitEventCmd = &cobra.Command{
 }
 
 // ----- helpers -----
+
+// resolveCopilotProjectDir returns the directory where the copilot's
+// .fry/copilot/ artifacts actually live. fry runs in worktree mode for
+// COMPLEX builds, in which case the artifacts live in the worktree dir,
+// NOT the main checkout. Without this redirect, `fry copilot tail` (and
+// every other copilot subcommand) would look in the wrong place and
+// report "no event log".
+//
+// Resolution order:
+//
+//  1. git.ReadPersistedStrategy(dir) — the strategy file written by
+//     fry main during run setup. Authoritative when present.
+//
+//  2. Scan dir/.fry-worktrees/* for a worktree subdir that has a
+//     .fry/copilot/ directory. Used as a fallback when the strategy
+//     file hasn't been persisted yet (e.g., the user runs
+//     `fry copilot tail` against a build that's still in early
+//     prepare). If multiple match, pick the most recently modified.
+//
+//  3. Otherwise return dir unchanged.
+func resolveCopilotProjectDir(dir string) string {
+	if dir == "" {
+		return dir
+	}
+	if setup, err := git.ReadPersistedStrategy(dir); err == nil && setup != nil && setup.WorkDir != "" && setup.WorkDir != dir {
+		if _, statErr := os.Stat(setup.WorkDir); statErr == nil {
+			return setup.WorkDir
+		}
+	}
+	// Fallback: scan .fry-worktrees/* for a single, recent worktree
+	// that has copilot state. Catches the early-prepare race where
+	// the strategy hasn't been persisted yet.
+	wtRoot := filepath.Join(dir, config.GitWorktreeDir)
+	entries, err := os.ReadDir(wtRoot)
+	if err != nil {
+		return dir
+	}
+	type candidate struct {
+		path  string
+		mtime time.Time
+	}
+	var cands []candidate
+	for _, ent := range entries {
+		if !ent.IsDir() {
+			continue
+		}
+		full := filepath.Join(wtRoot, ent.Name())
+		if !fileExists(filepath.Join(full, config.CopilotDir)) {
+			continue
+		}
+		info, err := ent.Info()
+		if err != nil {
+			continue
+		}
+		cands = append(cands, candidate{path: full, mtime: info.ModTime()})
+	}
+	if len(cands) == 0 {
+		return dir
+	}
+	best := cands[0]
+	for _, c := range cands[1:] {
+		if c.mtime.After(best.mtime) {
+			best = c
+		}
+	}
+	return best.path
+}
 
 func processAlive(pid int) bool {
 	if pid <= 0 {
