@@ -41,6 +41,11 @@ start builds, monitor progress, interpret results, and steer builds mid-flight.
 | Stream events | `fry events --follow --json --project-dir <dir>` |
 | Monitor build | `fry monitor --json --project-dir <dir>` |
 | Monitor dashboard | `fry monitor --dashboard --project-dir <dir>` |
+| Run with copilot | `fry run --copilot --project-dir <dir>` (auto-enabled at `--effort=max`) |
+| Copilot status | `fry copilot status --json --project-dir <dir>` |
+| Copilot tail | `fry copilot tail --follow --project-dir <dir>` |
+| Copilot stop | `fry copilot stop --project-dir <dir>` |
+| Copilot summary | `fry copilot summary --project-dir <dir>` |
 | Consciousness health | `fry status --consciousness --project-dir <dir>` |
 | Trigger reflection | `fry reflect` |
 | Print identity | `fry identity` (or `fry identity --full`) |
@@ -1003,6 +1008,113 @@ Experiences are stored in `~/.fry/experiences/`. During a build, in-progress
 checkpoint state lives under `.fry/consciousness/`. The `--telemetry` flag
 enables checkpoint-summary and lifecycle upload; failed uploads stay queued for
 retry. Reflection runs weekly and updates Fry's identity.
+
+## Copilot Mode
+
+The copilot is a parallel persistent agent session that monitors a build via a
+self-installed cron and intervenes when something goes wrong. It edits the fry
+source tree to fix canonical bugs (test → make install → commit → push →
+restart) or remediates broken build artifacts to unstick the build.
+
+```bash
+# Enable for any build
+fry run --copilot --project-dir /path/to/project
+
+# Choose engine explicitly
+fry run --copilot=claude --project-dir /path/to/project
+fry run --copilot=codex --project-dir /path/to/project    # in-process scheduler fallback
+
+# Customize cadence (default 10m, range 1m–1h)
+fry run --copilot --copilot-interval=15m --project-dir /path/to/project
+
+# Passive observation only (no interventions)
+fry run --copilot --copilot-passive --project-dir /path/to/project
+
+# Auto-enabled at max effort; opt-out:
+fry run --effort=max --no-copilot --project-dir /path/to/project
+```
+
+### When to suggest enabling the copilot
+
+Recommend `--copilot` to the user when:
+- The build is long (multiple sprints, complex epic)
+- The user wants the build to recover from canonical fry bugs without manual intervention
+- The user is running unattended (CI, overnight, agent-driven)
+- The effort level is `high` or `max`
+
+Skip the suggestion when:
+- The build is short (< 30 min) or has 1–2 sprints
+- The user is monitoring manually
+- The build runs on shared infrastructure where commit/push authority would be inappropriate
+
+### Inspecting a running copilot
+
+```bash
+# What's the copilot doing right now?
+fry copilot status --project-dir /path/to/project
+fry copilot status --json --project-dir /path/to/project
+
+# Watch live activity (human-readable narrative log)
+fry copilot tail --follow --project-dir /path/to/project
+
+# Watch the structured event stream
+fry copilot tail --follow --jsonl --project-dir /path/to/project
+```
+
+### Attaching to the copilot session manually
+
+The copilot session is stable for the lifetime of the build. The session UUID is
+printed at startup, saved to `.fry/copilot/session-id.txt`, and shown by
+`fry copilot status`. To attach a separate terminal:
+
+```bash
+# Exec the current shell into the session
+fry copilot attach --project-dir /path/to/project
+
+# Or just print the command (for tmux / IDE integration)
+fry copilot attach --print-only --project-dir /path/to/project
+# claude --resume 4a8b1c7e-8f3a-4d2b-9e1a-7c5b3f2a8d1c
+```
+
+Messages typed into an attached session become part of the conversation; the
+copilot sees them on its next reasoning step and logs them under "external
+guidance" in its scratchpad.
+
+### Stopping the copilot without stopping the build
+
+```bash
+fry copilot stop --project-dir /path/to/project
+```
+
+This writes `.fry/copilot/stop-requested`. The next wake reads it, deletes the
+cron, writes the final summary, and exits cleanly. The build continues
+unaffected.
+
+### Reading the copilot's final summary
+
+```bash
+fry copilot summary --project-dir /path/to/project       # final-summary.md
+fry copilot summary --current --project-dir /path/to/project  # in-progress synthesis
+fry copilot list-interventions --project-dir /path/to/project # list intervention reports
+```
+
+### Copilot artifact paths
+
+| Path | What it is |
+|---|---|
+| `.fry/copilot/manifest.json` | Session config: engine, session ID, cron ID, mode, capabilities |
+| `.fry/copilot/session-id.txt` | One-line session UUID for `claude --resume` |
+| `.fry/copilot/cron.id` | Cron tool ID returned by `CronCreate` |
+| `.fry/copilot/state-snapshot.json` | Compact build state — atomically rewritten by fry on every observer wake-point (10s debounce) |
+| `.fry/copilot/events.txt` | Human-readable narrative log |
+| `.fry/copilot/events.jsonl` | Structured event stream (mirrored into `.fry/observer/events.jsonl`) |
+| `.fry/copilot/scratchpad.md` | Working memory across wakes |
+| `.fry/copilot/interventions/<NNNN>-<slug>.md` | Per-intervention reports |
+| `.fry/copilot/final-summary.md` | Final summary written on clean exit |
+| `.fry/copilot/bootstrap.log` | Bootstrap subprocess stdout/stderr |
+
+Copilot events use the `copilot_*` prefix and are visible in `fry events
+--follow`, `fry monitor`, and `fry copilot tail`.
 
 ## Build Events
 

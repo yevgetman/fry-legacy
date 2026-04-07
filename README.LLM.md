@@ -155,9 +155,19 @@ fry/
 │   │   └── instance.go          # Anonymized machine identifier: InstanceID
 │   ├── observer/
 │   │   ├── observer.go          # Observer lifecycle: InitNewSession, ResumeSession, WakeUp, ShouldWakeUp
-│   │   ├── event.go             # Event types, EmitEvent, ReadEvents, ReadRecentEvents
+│   │   ├── event.go             # Event types (incl. EventCopilot* taxonomy), EmitEvent, ReadEvents, ReadRecentEvents
 │   │   ├── identity.go          # ReadIdentity (delegates to consciousness.LoadCoreIdentity)
 │   │   └── prompt.go            # Wake-up prompt builder, strict response parser, directive extraction
+│   ├── copilot/
+│   │   ├── manifest.go          # Manifest schema, WriteManifest, ReadManifest, session-id/cron-id helpers
+│   │   ├── sourcedir.go         # DiscoverFrySourceDir (walk-up, env, standard locations)
+│   │   ├── session.go           # NewSessionUUID, ProbeClaudeCapabilities, CaptureSessionID, three-mechanism fallback
+│   │   ├── lock.go              # AcquireTickLock, ReleaseTickLock, IsBusy, stale-PID stealing
+│   │   ├── snapshot.go          # WriteStateSnapshot (atomic + 10s debounce), ForceWriteStateSnapshot, ReadStateSnapshot
+│   │   ├── prompt.go            # RenderBootstrapPrompt, RenderSummaryPrompt (text/template against templates/copilot/)
+│   │   ├── bootstrap.go         # Bootstrap launcher: detached subprocess, Setpgid, banner, manifest write
+│   │   ├── event.go             # EmitEvent (writes both copilot stream AND observer canonical stream), AppendEventsText
+│   │   └── cleanup.go           # CleanupOnExit, ArchiveCopilotDirIfDone, CopilotConfigured
 │   ├── monitor/
 │   │   ├── snapshot.go          # Snapshot and EnrichedEvent types
 │   │   ├── source.go            # Source interface + core polling implementations (event, phase, status, lock, progress, log, exit)
@@ -235,6 +245,19 @@ fry/
 | `observer/events.jsonl` | Observer event stream (reset only for a new logical session) |
 | `observer/scratchpad.md` | Observer working memory (preserved on resume) |
 | `observer/wake-prompt.md` | Observer wake-up prompt (transient, deleted after use) |
+| `copilot/manifest.json` | Copilot session config (engine, session ID, mode, capabilities) |
+| `copilot/session-id.txt` | Copilot session UUID for `claude --resume` |
+| `copilot/cron.id` | Cron tool ID returned by CronCreate |
+| `copilot/state-snapshot.json` | Compact build state snapshot — atomic + 10s-debounced rewrite by fry main |
+| `copilot/events.txt` | Copilot human-readable narrative event log |
+| `copilot/events.jsonl` | Copilot structured event stream (mirrored into observer canonical stream) |
+| `copilot/scratchpad.md` | Copilot working memory across wakes |
+| `copilot/interventions/` | Per-intervention markdown reports written by the copilot agent |
+| `copilot/final-summary.md` | Copilot's final summary written on clean exit |
+| `copilot/bootstrap.log` | Copilot bootstrap subprocess stdout/stderr |
+| `copilot/tick.lock` | Copilot tick busy indicator (PID + start timestamp) |
+| `copilot/stop-requested` | Flag file written by `fry copilot stop` |
+| `copilot/prompts/bootstrap.md` | Rendered bootstrap prompt for inspection |
 | `consciousness/session.json` | Durable consciousness session state |
 | `consciousness/checkpoints.jsonl` | Append-only checkpoint log |
 | `consciousness/checkpoints/` | Per-checkpoint durable records |
@@ -543,6 +566,21 @@ Key flags:
 | `ObserverScratchpadFile` | `.fry/observer/scratchpad.md` | Per-session working memory |
 | `ObserverPromptFile` | `.fry/observer/wake-prompt.md` | Transient wake-up prompt |
 | `MaxObserverEvents` | `50` | Max recent events included in wake-up prompt |
+| `CopilotDir` | `.fry/copilot` | Copilot session directory |
+| `CopilotManifestFile` | `.fry/copilot/manifest.json` | Copilot session config |
+| `CopilotSessionIDFile` | `.fry/copilot/session-id.txt` | Session UUID convenience copy |
+| `CopilotCronIDFile` | `.fry/copilot/cron.id` | Cron tool ID returned by CronCreate |
+| `CopilotStateSnapshotFile` | `.fry/copilot/state-snapshot.json` | Compact build state for the agent |
+| `CopilotEventsTextFile` | `.fry/copilot/events.txt` | Human-readable narrative log |
+| `CopilotEventsJSONLFile` | `.fry/copilot/events.jsonl` | Structured event stream |
+| `CopilotInterventionsDir` | `.fry/copilot/interventions` | Per-intervention markdown reports |
+| `CopilotFinalSummaryFile` | `.fry/copilot/final-summary.md` | Final summary on clean exit |
+| `CopilotTickLockFile` | `.fry/copilot/tick.lock` | Tick busy indicator |
+| `CopilotStopRequestedFile` | `.fry/copilot/stop-requested` | Flag from `fry copilot stop` |
+| `CopilotDefaultIntervalMinutes` | `10` | Default cron wake interval |
+| `CopilotMinIntervalSeconds` | `60` | Minimum interval (1m) |
+| `CopilotMaxIntervalSeconds` | `3600` | Maximum interval (1h) |
+| `CopilotMaxInterventionsPerClass` | `3` | Per-class intervention cap before escalation |
 | `IdentityCoreFile` | `identity/core.md` | Core identity (go:embed path) |
 | `IdentityDispositionFile` | `identity/disposition.md` | Disposition (go:embed path) |
 | `IdentityDomainsDir` | `identity/domains` | Domain files directory (go:embed path) |

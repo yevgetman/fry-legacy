@@ -104,6 +104,13 @@ fry run --sprint 3         # Start from sprint 3 (uses .fry/epic.md)
 | `--no-project-overview` | Skip interactive confirmations (triage classification and project overview) |
 | `--no-audit` | Disable sprint and build audits for this run |
 | `--no-observer` | Disable the observer metacognitive layer (event stream and wake-ups). Observer is also disabled at `fast` effort and during `--dry-run`. See [Observer](observer.md). |
+| `--copilot[=<engine>]` | Enable the build copilot. Default engine is `claude`. Use `--copilot=codex` to choose codex (in-process scheduler fallback). Auto-enabled at `--effort=max` unless `--no-copilot` is set. See [Copilot](copilot.md). |
+| `--copilot-interval <duration>` | Copilot wake interval (default `10m`, range `1m`–`1h`). |
+| `--copilot-fry-source <path>` | Path to the fry source tree the copilot may edit. Default: auto-detected from the running binary, then `$FRY_SOURCE_DIR`, then standard locations. |
+| `--copilot-model <model>` | Override the copilot agent model. |
+| `--copilot-passive` | Disable copilot interventions; events and final summary only. |
+| `--copilot-print-summary` | Print the copilot final summary to stdout when fry exits. |
+| `--no-copilot` | Explicitly disable the copilot. Overrides the `--effort=max` auto-enable rule. |
 | `--simulate-review <verdict>` | Test the review pipeline without LLM calls. Verdict: `CONTINUE` or `DEVIATE` |
 | `--verbose` | Stream full agent output to terminal (default: status banners only) |
 | `--sprint <N>` | Start from sprint N. Alternative to the positional start sprint argument — no need to specify the epic file path. Cannot be combined with positional sprint arguments. |
@@ -897,6 +904,55 @@ fry events [flags]
 fry events                           # List all recorded events
 fry events --follow                  # Stream events in real time
 fry events --follow --json           # Stream as JSON lines (for programmatic consumption)
+```
+
+---
+
+## `fry copilot`
+
+Inspect and control the parallel build copilot session. See [Copilot](copilot.md) for the full feature documentation.
+
+```
+fry copilot status [--project-dir <dir>] [--json]
+fry copilot attach [--project-dir <dir>] [--print-only]
+fry copilot stop   [--project-dir <dir>] [--keep-cron]
+fry copilot tail   [--project-dir <dir>] [--follow] [--jsonl]
+fry copilot summary [--project-dir <dir>] [--current]
+fry copilot list-interventions [--project-dir <dir>]
+fry copilot emit-event --type=<type> --data=<json>   # internal helper used BY the agent
+```
+
+### Subcommands
+
+| Subcommand | Description |
+|---|---|
+| `status` | Print current copilot session status: engine, mode, session ID, cron ID, build phase, intervention counts. `--json` for machine-readable output. Exit code 0 active, 1 absent, 2 stale. |
+| `attach` | Exec the current terminal into the running copilot session via `claude --resume <session-id>`. Refuses (exit 3) if the copilot is mid-tick. `--print-only` prints the command without exec'ing. |
+| `stop` | Request the copilot to exit cleanly. Writes `.fry/copilot/stop-requested`; the next wake reads it, deletes the cron, writes the final summary, and exits. Does NOT stop the build itself. `--keep-cron` skips cron deletion. |
+| `tail` | Tail the copilot event log. Default is `events.txt` (human-readable narrative); `--jsonl` for the structured stream. `--follow` for tail -f behavior. |
+| `summary` | Print the copilot's `final-summary.md`. `--current` synthesizes an in-progress summary from event counts and intervention reports if no final summary exists yet. |
+| `list-interventions` | List all intervention reports in `.fry/copilot/interventions/`. |
+| `emit-event` | Append a structured event to both the copilot stream and the canonical observer stream. Used by the copilot agent itself, not by humans. |
+
+### Examples
+
+```bash
+# Check what the copilot is up to
+fry copilot status
+fry copilot status --json | jq .manifest.session_id
+
+# Watch live activity
+fry copilot tail --follow
+
+# Open a Claude Code session connected to the copilot
+fry copilot attach
+fry copilot attach --print-only | bash    # for tmux/IDE integration
+
+# Ask the copilot to wind down without stopping the build
+fry copilot stop
+
+# Read the final report after the build ends
+fry copilot summary
 ```
 
 ---

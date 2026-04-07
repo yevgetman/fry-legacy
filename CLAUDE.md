@@ -122,7 +122,7 @@ This is not optional. When you add, modify, or remove a feature:
 
 - `cmd/fry/main.go` — Entry point only. Calls `cli.Execute()` and nothing else.
 - `internal/cli/` — Cobra command definitions. All user-facing CLI logic goes here.
-- `internal/<feature>/` — One package per feature domain (e.g., `epic`, `sprint`, `verify`, `heal`, `audit`, `review`, `engine`, `prepare`, `git`, `docker`, `preflight`, `lock`, `log`, `media`, `assets`, `summary`, `shellhook`, `textutil`, `continuerun`).
+- `internal/<feature>/` — One package per feature domain (e.g., `epic`, `sprint`, `verify`, `heal`, `audit`, `review`, `engine`, `prepare`, `git`, `docker`, `preflight`, `lock`, `log`, `media`, `assets`, `summary`, `shellhook`, `textutil`, `continuerun`, `copilot`).
 - `internal/config/` — Constants only. No logic, no functions.
 - `templates/` — Embedded markdown templates (compiled into binary via `//go:embed`).
 
@@ -287,6 +287,7 @@ func TestFunctionName(t *testing.T) {
 - Imperative present tense: "Add feature", "Fix bug", "Remove unused code"
 - Describe **what and why**, not how: "Add --user-prompt-file flag to load user prompt from a file"
 - One logical change per commit
+- **Copilot-authored commits**: any commit produced by `fry run --copilot` while the copilot is fixing a canonical fry bug must use the `[copilot]` prefix and include the full provenance template documented in [docs/copilot.md](docs/copilot.md). This is what makes copilot interventions findable via `git log --grep='\[copilot\]'` and lets reviewers distinguish them from human-authored commits.
 
 ### What not to commit
 

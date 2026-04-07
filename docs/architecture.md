@@ -29,6 +29,7 @@ internal/media/             Media directory scanner and manifest builder
 internal/metrics/           Token usage parsing for Claude and Codex engines
 internal/monitor/           Real-time build monitoring (event stream, status snapshots, log tail)
 internal/observer/          Metacognitive event recording, identity, scratchpad continuity, and strict wake-up parsing
+internal/copilot/           Parallel persistent agent: manifest, source-dir discovery, session-ID capture, state snapshot, prompts, bootstrap launcher, lock, cleanup, events
 internal/preflight/         Pre-build validation checks
 internal/prepare/           Artifact generation (Steps 0-3), mode handling, project overview
 internal/report/            BuildReport JSON serialization

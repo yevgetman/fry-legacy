@@ -25,6 +25,7 @@ import (
 	"github.com/yevgetman/fry/internal/config"
 	"github.com/yevgetman/fry/internal/consciousness"
 	"github.com/yevgetman/fry/internal/continuerun"
+	"github.com/yevgetman/fry/internal/copilot"
 	"github.com/yevgetman/fry/internal/docker"
 	"github.com/yevgetman/fry/internal/engine"
 	"github.com/yevgetman/fry/internal/epic"
@@ -82,6 +83,13 @@ var (
 	runNoTelemetry           bool
 	runMCPConfig             string
 	runConfirmFile           bool
+	runCopilot               string // "" = unset; otherwise engine name (or "" with cmd.Flags().Changed("copilot")=true means default)
+	runCopilotInterval       string
+	runCopilotFrySource      string
+	runCopilotModel          string
+	runCopilotPassive        bool
+	runCopilotPrintSummary   bool
+	runNoCopilot             bool
 	resolveGitHubIssuePrompt = githubissue.ResolvePrompt
 )
 
@@ -235,6 +243,8 @@ var runCmd = &cobra.Command{
 			})
 		}
 		defer releaseLock()
+		// Copilot cleanup is best-effort and never blocks fry's exit.
+		defer func() { copilot.CleanupOnExit(projectPath) }()
 
 		printMigrationHintIfNeeded(cmd.OutOrStdout(), projectPath, epicArg)
 
@@ -759,6 +769,40 @@ var runCmd = &cobra.Command{
 			}
 		}
 
+		// Copilot bootstrap (Phase 11). Auto-enables at max effort unless
+		// --no-copilot was set explicitly. Manual --copilot=<engine> wins
+		// at any effort level.
+		if copilotShouldBootstrap(cmd, ep.EffortLevel) {
+			copilotEngine := resolveCopilotEngine()
+			frySrcDir := copilot.DiscoverFrySourceDir(runCopilotFrySource)
+			passive := runCopilotPassive || frySrcDir == ""
+			bootstrapResult, bootErr := copilot.Bootstrap(copilot.BootstrapOpts{
+				ProjectDir:   projectPath,
+				FrySourceDir: frySrcDir,
+				Engine:       copilotEngine,
+				Model:        runCopilotModel,
+				EpicName:     ep.Name,
+				EffortLevel:  string(ep.EffortLevel),
+				TotalSprints: ep.TotalSprints,
+				BuildPID:     os.Getpid(),
+				Interval:     runCopilotInterval,
+				RunID:        time.Now().UTC().Format("20060102-150405"),
+				Passive:      passive,
+				DryRun:       runDryRun,
+				Stdout:       cmd.OutOrStdout(),
+			})
+			if bootErr != nil {
+				frlog.Log("WARNING: copilot bootstrap failed: %v", bootErr)
+			} else if bootstrapResult != nil && bootstrapResult.Manifest != nil {
+				if bootstrapResult.Manifest.Mode == copilot.ModePassive {
+					frlog.Log("  COPILOT: passive mode (no fry source dir found)")
+				} else if bootstrapResult.Manifest.Mode == copilot.ModeActive {
+					frlog.Log("  COPILOT: active session %s (engine=%s, interval=%s)",
+						bootstrapResult.Manifest.SessionID, copilotEngine, runCopilotInterval)
+				}
+			}
+		}
+
 		// Load identity disposition for sprint prompts
 		var identityDisposition string
 		if disp, dispErr := consciousness.LoadDisposition(); dispErr == nil {
@@ -859,6 +903,7 @@ var runCmd = &cobra.Command{
 					Data:   map[string]string{"name": spr.Name},
 				})
 			}
+			_ = copilot.WriteStateSnapshot(projectPath)
 
 			// Update build status for agent polling
 			buildStatus.Build.CurrentSprint = spr.Number
@@ -1028,6 +1073,7 @@ var runCmd = &cobra.Command{
 					})
 				}
 			}
+			_ = copilot.WriteStateSnapshot(projectPath)
 
 			// Collect per-sprint data for the build report and token summary.
 			sprintEnd := time.Now()
@@ -1253,6 +1299,7 @@ var runCmd = &cobra.Command{
 							Data:   auditData,
 						})
 					}
+					_ = copilot.WriteStateSnapshot(projectPath)
 
 					// Update build status with audit result
 					updateBuildStatusAudit(buildStatus, spr.Number, auditResult)
@@ -1944,6 +1991,7 @@ var runCmd = &cobra.Command{
 				Type: observer.EventBuildAuditDone,
 				Data: buildAuditData,
 			})
+			_ = copilot.WriteStateSnapshot(projectPath)
 
 			if observer.ShouldWakeUp(ep.EffortLevel, observer.WakeAfterBuildAudit) {
 				observerModel := engine.ResolveModel("", currentEngineName(), string(ep.EffortLevel), engine.SessionObserver)
@@ -2077,6 +2125,7 @@ var runCmd = &cobra.Command{
 				Type: observer.EventBuildEnd,
 				Data: map[string]string{"outcome": buildOutcome},
 			})
+			_ = copilot.WriteStateSnapshot(projectPath)
 
 			if observer.ShouldWakeUp(ep.EffortLevel, observer.WakeBuildEnd) {
 				observerModel := engine.ResolveModel("", currentEngineName(), string(ep.EffortLevel), engine.SessionObserver)
@@ -2462,6 +2511,18 @@ func init() {
 	runCmd.Flags().StringVar(&runMCPConfig, "mcp-config", "", "Path to MCP server configuration file (Claude engine only)")
 	runCmd.Flags().BoolVarP(&runYes, "yes", "y", false, "Auto-accept all interactive confirmation prompts")
 	runCmd.Flags().BoolVar(&runConfirmFile, "confirm-file", false, "Use file-based interactive prompts (.fry/confirm-prompt.json) instead of stdin")
+
+	// Copilot flags. --copilot is hybrid: presence enables, optional value
+	// selects the engine. The empty default + cmd.Flags().Changed("copilot")
+	// pattern mirrors --planning.
+	runCmd.Flags().StringVar(&runCopilot, "copilot", "", "Enable build copilot (default engine: claude). Use =<engine> to choose.")
+	runCmd.Flags().Lookup("copilot").NoOptDefVal = "claude" // bare --copilot → claude
+	runCmd.Flags().StringVar(&runCopilotInterval, "copilot-interval", "10m", "Copilot wake interval (1m–1h)")
+	runCmd.Flags().StringVar(&runCopilotFrySource, "copilot-fry-source", "", "Path to fry source tree (default: auto-detected)")
+	runCmd.Flags().StringVar(&runCopilotModel, "copilot-model", "", "Override copilot agent model")
+	runCmd.Flags().BoolVar(&runCopilotPassive, "copilot-passive", false, "Disable copilot interventions; events + summary only")
+	runCmd.Flags().BoolVar(&runCopilotPrintSummary, "copilot-print-summary", false, "Print copilot final summary to stdout when fry exits")
+	runCmd.Flags().BoolVar(&runNoCopilot, "no-copilot", false, "Explicitly disable copilot (overrides auto-enable at max effort)")
 }
 
 func resolveProjectDir(dir string) (string, error) {
@@ -2469,6 +2530,51 @@ func resolveProjectDir(dir string) (string, error) {
 		dir = "."
 	}
 	return filepath.Abs(dir)
+}
+
+// copilotShouldBootstrap encapsulates the decision logic for whether
+// `fry run` should launch a copilot session for this build:
+//
+//   - --no-copilot always wins (returns false)
+//   - --copilot (or --copilot=<engine>) explicitly enables (returns true)
+//   - effort=max auto-enables unless --no-copilot was set
+//   - everything else: opt-in
+func copilotShouldBootstrap(cmd *cobra.Command, effortLevel epic.EffortLevel) bool {
+	if runNoCopilot {
+		return false
+	}
+	if cmd.Flags().Changed("copilot") {
+		return true
+	}
+	if effortLevel == epic.EffortMax {
+		frlog.Log("  COPILOT: auto-enabled for max effort (use --no-copilot to disable)")
+		return true
+	}
+	return false
+}
+
+// resolveCopilotEngine returns the engine name for the copilot. Defaults
+// to claude when --copilot was passed without a value or when auto-enabled.
+func resolveCopilotEngine() string {
+	if runCopilot == "" {
+		return "claude"
+	}
+	switch strings.ToLower(strings.TrimSpace(runCopilot)) {
+	case "claude", "codex":
+		return strings.ToLower(strings.TrimSpace(runCopilot))
+	case "auto":
+		// Auto: inherit build engine when supported, else claude.
+		switch runEngine {
+		case "claude", "codex":
+			return runEngine
+		default:
+			return "claude"
+		}
+	default:
+		// Unknown value — log a warning, fall back to claude.
+		frlog.Log("WARNING: unknown --copilot=%s, falling back to claude", runCopilot)
+		return "claude"
+	}
 }
 
 func resolveUserPrompt(projectDir, provided, promptFile string, persist bool) (string, error) {

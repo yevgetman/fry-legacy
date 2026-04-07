@@ -143,8 +143,15 @@ Flags:
 | `.fry/consciousness/scratchpad-history.jsonl` | Scratchpad delta history | Per logical build session |
 | `~/.fry/experiences/build-<session-id>.json` | Long-term build experience record | Across builds |
 
+## Relationship to the Copilot
+
+The observer and the [copilot](copilot.md) are complementary, not redundant. The observer is a **passive metacognitive layer** that runs synchronously inside the build process at fixed wake-points and writes thoughts to disk. The copilot is an **active out-of-process intervention loop** that runs in a separate persistent agent session, polls a state snapshot every ~10 minutes, and edits real files (fry source for canonical bug fixes; build artifacts for tactical remediation).
+
+Use the observer for memory and pattern recognition. Use the copilot for hands-on remediation when something goes wrong.
+
 ## Related Documentation
 
 - [Consciousness](consciousness.md)
 - [Effort Levels](effort-levels.md)
 - [Sprint Execution](sprint-execution.md)
+- [Copilot](copilot.md)
