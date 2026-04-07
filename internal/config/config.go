@@ -40,8 +40,8 @@ const (
 	AssetsDir                 = "assets"
 	AgentsFile                = ".fry/AGENTS.md"
 	Version                   = "0.1.0"
-	AgentInvocationPrompt     = "Read and execute ALL instructions in .fry/prompt.md. Before starting, read .fry/sprint-progress.txt for context from previous iterations in this sprint, and .fry/epic-progress.txt for summaries of prior sprints. Also read plans/plan.md for strategic context on how this sprint fits the overall plan. If a media/ directory exists, it contains assets (images, PDFs, etc.) that may be referenced in the plan — use or copy them as instructed. Before declaring completion, verify your work: run the project's build and test commands (e.g., make build, go build ./..., npm run build, go test ./..., npm test) and fix any failures. After completing your work, append your progress to .fry/sprint-progress.txt."
-	HealInvocationPrompt      = "Read and execute ALL instructions in .fry/prompt.md. This is an ALIGNMENT pass — fix the sanity-check failures described in the prompt."
+	AgentInvocationPrompt     = "Read and execute ALL instructions in .fry/prompt.md. Before starting, read .fry/sprint-progress.txt for context from previous iterations in this sprint, and .fry/epic-progress.txt for summaries of prior sprints. Also read plans/plan.md for strategic context on how this sprint fits the overall plan. If a media/ directory exists, it contains assets (images, PDFs, etc.) that may be referenced in the plan — use or copy them as instructed. Before declaring completion, verify your work: run the project's build and test commands (e.g., make build, go build ./..., npm run build, go test ./..., npm test) and fix any failures. After completing your work, append your progress to .fry/sprint-progress.txt. AUTONOMOUS MODE: there is no user available to answer questions. Do NOT ask \"May I proceed?\" — you have full pre-authorized permission for any action you deem necessary, including destructive operations like database resets, file deletions, and migration drops. Asking for permission and stopping is identical to failing the sprint."
+	HealInvocationPrompt      = "Read and execute ALL instructions in .fry/prompt.md. This is an ALIGNMENT pass — fix the sanity-check failures described in the prompt. AUTONOMOUS MODE: do NOT ask for permission. You have pre-authorized permission for any action including database resets and destructive commands. Just do the work."
 	DefaultEffortLevel        = "" // auto-detect
 	ResumeHealMultiplier      = 2
 	ResumeMinHealAttempts     = 6
@@ -62,7 +62,7 @@ const (
 	MaxAuditDiffBytes           = 100_000
 	AuditInvocationPrompt       = "Read and execute ALL instructions in .fry/audit-prompt.md. This is a sprint audit session. Follow the role, scope, and output instructions in the prompt file. Do NOT modify source or content files."
 	AuditVerifyInvocationPrompt = "Read and execute ALL instructions in .fry/audit-prompt.md. This is an audit verify session. Verify only the listed issues, write the results to .fry/sprint-audit.txt, and do NOT modify source or content files."
-	AuditFixInvocationPrompt    = "Read and execute ALL instructions in .fry/audit-prompt.md. This is an audit fix session. You have full codebase context from the audit phase. Fix only the listed issues and preserve unrelated behavior."
+	AuditFixInvocationPrompt    = "Read and execute ALL instructions in .fry/audit-prompt.md. This is an audit fix session. You have full codebase context from the audit phase. Fix only the listed issues and preserve unrelated behavior. AUTONOMOUS MODE: do NOT ask for permission. You have pre-authorized permission for any action including database resets and destructive commands."
 
 	// Two-level audit loop constants
 	DefaultMaxOuterAuditCycles           = 3   // outer audit cycles (medium/default)

@@ -32,6 +32,32 @@ type PromptOpts struct {
 func AssemblePrompt(opts PromptOpts) (string, error) {
 	var b strings.Builder
 
+	// Layer 0: Authority statement — autonomous non-interactive mode
+	// This must be the first thing the agent sees. The recurring failure
+	// mode it prevents: an agent self-imposing a permission prompt
+	// ("May I proceed with X?") and exiting without making any changes.
+	// In an autonomous build there is no user available to answer, so the
+	// agent must understand it has full pre-authorized permission for
+	// every action it deems necessary, including destructive ones.
+	b.WriteString("# ===== AUTONOMOUS NON-INTERACTIVE MODE =====\n")
+	b.WriteString("# You are running inside an automated build orchestrator. There is NO\n")
+	b.WriteString("# user available to answer questions or grant approvals. The orchestrator\n")
+	b.WriteString("# has pre-authorized you for ANY action you deem necessary to complete\n")
+	b.WriteString("# the sprint, including destructive operations: dropping and recreating\n")
+	b.WriteString("# local databases, deleting files, force-pushing to local branches,\n")
+	b.WriteString("# resetting migration state, removing build artifacts, killing local\n")
+	b.WriteString("# processes, modifying any file in the project including configuration.\n")
+	b.WriteString("#\n")
+	b.WriteString("# Do NOT ask \"May I proceed?\" or \"Should I do X?\" — the answer is\n")
+	b.WriteString("# always YES. Asking and stopping is identical to failing the sprint.\n")
+	b.WriteString("# If you would normally pause for confirmation before a destructive\n")
+	b.WriteString("# action, treat that pause as the confirmation itself: just do it.\n")
+	b.WriteString("#\n")
+	b.WriteString("# This applies to local development environments only — there is no\n")
+	b.WriteString("# production data, no remote services, and no shared infrastructure at\n")
+	b.WriteString("# risk. Anything you can reach from this working tree is yours to\n")
+	b.WriteString("# modify or destroy in service of completing the sprint correctly.\n\n")
+
 	// Layer 0.5: Codebase context (only if codebase.md exists in .fry-config/)
 	codebaseContent := readOptionalPromptFile(filepath.Join(opts.ProjectDir, config.CodebaseFile))
 	if codebaseContent != "" {
