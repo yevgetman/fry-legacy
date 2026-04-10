@@ -143,30 +143,34 @@ When you identify a canonical fry bug and decide to fix it:
 1. Emit: fry copilot emit-event --type=copilot_intervention_started \
      --data='{"id":"<NNNN>","kind":"fry_bug_fix","summary":"..."}'
 
-2. Read the relevant source files under {{.FrySourceDir}} to confirm
+2. If this is your first fry source edit this session, read
+   {{.FrySourceDir}}/CLAUDE.md first — it contains the full coding
+   conventions, package layout, testing rules, and commit style.
+
+3. Read the relevant source files under {{.FrySourceDir}} to confirm
    the bug and its fix. Write a test that reproduces the bug if
    reasonably possible (not required for trivial fixes).
 
-3. Make the minimal edit. Do NOT refactor surrounding code. Do NOT
+4. Make the minimal edit. Do NOT refactor surrounding code. Do NOT
    add comments to code you didn't change.
 
-4. Run tests in the changed package first:
+5. Run tests in the changed package first:
      cd {{.FrySourceDir}} && go test ./internal/<pkg>/...
    If this fails: abort intervention. Log failure. Do NOT proceed.
 
-5. Run the full test suite:
+6. Run the full test suite:
      cd {{.FrySourceDir}} && go test -race ./...
    If this fails: abort intervention. Log failure. Do NOT proceed.
    NOTE: -race is REQUIRED. Do not skip it.
 
-6. Run make install:
+7. Run make install:
      cd {{.FrySourceDir}} && make install
    If this fails: abort. Log. Do NOT proceed.
 
-7. Stage specific files (NEVER use `git add .` or `git add -A`):
+8. Stage specific files (NEVER use `git add .` or `git add -A`):
      cd {{.FrySourceDir}} && git add internal/<pkg>/file.go internal/<pkg>/file_test.go
 
-8. Commit with the copilot template (use a HEREDOC for formatting):
+9. Commit with the copilot template (use a HEREDOC for formatting):
      git commit -m "$(cat <<'EOF'
      [copilot] <one-line summary>
 
@@ -177,26 +181,26 @@ When you identify a canonical fry bug and decide to fix it:
      EOF
      )"
 
-9. Push to origin on the current branch:
+10. Push to origin on the current branch:
      cd {{.FrySourceDir}} && git push origin HEAD
    Use HEAD to avoid hardcoding branch name. Do NOT use --force.
    If push fails (e.g., non-fast-forward): log the failure, pull with
    rebase, retry once. If still fails: abort intervention gracefully,
    emit copilot_intervention_failed, continue the build without the fix.
 
-10. Emit events:
+11. Emit events:
      fry copilot emit-event --type=copilot_make_install --data='{"exit":"0"}'
      fry copilot emit-event --type=copilot_git_push --data='{"branch":"<name>","commit":"<sha>"}'
      fry copilot emit-event --type=copilot_intervention_completed \
        --data='{"id":"<NNNN>","commit":"<sha>","pushed":"true"}'
 
-11. Append to events.txt (one block):
+12. Append to events.txt (one block):
      <UTC NOW>  [intervention NNNN] fry bug fixed: <summary>
                   commit:  <sha> (pushed)
                   installed: yes
                   details: .fry/copilot/interventions/NNNN.md
 
-12. Write .fry/copilot/interventions/NNNN-<short-slug>.md with:
+13. Write .fry/copilot/interventions/NNNN-<short-slug>.md with:
      - Bug description
      - Root cause analysis
      - Fix description
@@ -205,7 +209,7 @@ When you identify a canonical fry bug and decide to fix it:
      - Commit SHA
      - Whether build was restarted (if required by the fix)
 
-13. DECIDE: does this fix require the running build to restart to take
+14. DECIDE: does this fix require the running build to restart to take
     effect?
     - If the fix affects only code the build calls during its NEXT
       sprint/phase, restart is NOT needed — the running fry process has
