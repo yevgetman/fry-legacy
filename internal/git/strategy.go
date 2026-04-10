@@ -333,6 +333,124 @@ func MergeAndCleanupWorktreeWith(ctx context.Context, setup *StrategySetup, ex E
 	return nil
 }
 
+// MergeAndCleanupBranch merges the fry branch into the original branch,
+// checks out the original branch, and deletes the fry branch. This is the
+// branch-strategy equivalent of MergeAndCleanupWorktree.
+func MergeAndCleanupBranch(ctx context.Context, setup *StrategySetup) error {
+	return MergeAndCleanupBranchWith(ctx, setup, DefaultExecutor)
+}
+
+// MergeAndCleanupBranchWith is like MergeAndCleanupBranch but uses the provided Executor.
+func MergeAndCleanupBranchWith(ctx context.Context, setup *StrategySetup, ex Executor) error {
+	if setup == nil || setup.Strategy != StrategyBranch {
+		return nil
+	}
+
+	origDir := setup.OriginalDir
+	branchName := setup.BranchName
+	origBranch := setup.OriginalBranch
+	if origBranch == "" {
+		origBranch = ex.CurrentBranch(ctx, origDir)
+	}
+	if origBranch == "" {
+		origBranch = "main"
+	}
+
+	// 1. Checkout the original branch
+	if current := ex.CurrentBranch(ctx, origDir); current != origBranch {
+		if err := ex.Checkout(ctx, origDir, origBranch); err != nil {
+			return fmt.Errorf("checkout %s before merge: %w", origBranch, err)
+		}
+	}
+
+	// 2. Merge the fry branch (fast-forward when possible)
+	if err := runGit(ctx, origDir, "merge", branchName, "--no-edit"); err != nil {
+		if retryErr := retryMergeMovingUntracked(ctx, origDir, branchName, err); retryErr != nil {
+			return fmt.Errorf("merge %s into %s: %w", branchName, origBranch, retryErr)
+		}
+	}
+
+	// 3. Delete the branch (safe delete — it's merged)
+	if err := runGit(ctx, origDir, "branch", "-d", branchName); err != nil {
+		fmt.Fprintf(os.Stderr, "fry: warning: branch delete: %v\n", err)
+	}
+
+	// 4. Remove stale git-strategy.txt
+	_ = os.Remove(filepath.Join(origDir, config.GitStrategyFile))
+
+	return nil
+}
+
+// RestoreBranchAfterFailure checks out the original branch without merging.
+// The fry branch is preserved for inspection.
+func RestoreBranchAfterFailure(ctx context.Context, setup *StrategySetup) error {
+	return RestoreBranchAfterFailureWith(ctx, setup, DefaultExecutor)
+}
+
+// RestoreBranchAfterFailureWith is like RestoreBranchAfterFailure but uses the provided Executor.
+func RestoreBranchAfterFailureWith(ctx context.Context, setup *StrategySetup, ex Executor) error {
+	if setup == nil || setup.Strategy != StrategyBranch {
+		return nil
+	}
+
+	origBranch := setup.OriginalBranch
+	if origBranch == "" {
+		origBranch = ex.CurrentBranch(ctx, setup.OriginalDir)
+	}
+	if origBranch == "" {
+		origBranch = "main"
+	}
+
+	if current := ex.CurrentBranch(ctx, setup.OriginalDir); current == origBranch {
+		return nil
+	}
+
+	if err := ex.Checkout(ctx, setup.OriginalDir, origBranch); err != nil {
+		return fmt.Errorf("restore branch after failure: checkout %s: %w", origBranch, err)
+	}
+
+	// Remove stale git-strategy.txt
+	_ = os.Remove(filepath.Join(setup.OriginalDir, config.GitStrategyFile))
+
+	return nil
+}
+
+// CleanupWorktrees removes all directories under .fry-worktrees/ via
+// `git worktree remove --force`, falling back to os.RemoveAll. Returns the
+// number of directories removed. Errors are reported as warnings to stderr.
+func CleanupWorktrees(ctx context.Context, projectDir string) int {
+	return CleanupWorktreesWith(ctx, projectDir, DefaultExecutor)
+}
+
+// CleanupWorktreesWith is like CleanupWorktrees but uses the provided Executor.
+func CleanupWorktreesWith(ctx context.Context, projectDir string, ex Executor) int {
+	root := filepath.Join(projectDir, config.GitWorktreeDir)
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return 0
+	}
+	removed := 0
+	for _, ent := range entries {
+		if !ent.IsDir() {
+			continue
+		}
+		wtPath := filepath.Join(root, ent.Name())
+		cmd := exec.CommandContext(ctx, "git", "worktree", "remove", "--force", wtPath)
+		cmd.Dir = projectDir
+		if err := cmd.Run(); err != nil {
+			if rmErr := os.RemoveAll(wtPath); rmErr != nil {
+				fmt.Fprintf(os.Stderr, "fry: warning: could not remove worktree %s: %v\n", wtPath, rmErr)
+				continue
+			}
+		}
+		removed++
+	}
+	if removed > 0 {
+		_ = ex.WorktreePrune(ctx, projectDir)
+	}
+	return removed
+}
+
 // worktreeArtifacts lists the .fry/ files that should be copied from the worktree
 // to the original project dir before worktree removal. These are gitignored artifacts
 // that would otherwise be lost.

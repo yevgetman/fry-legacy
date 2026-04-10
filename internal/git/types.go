@@ -70,6 +70,11 @@ func (s *StrategySetup) MarkCleanedUp() {
 	}
 }
 
+// IsCleanedUp reports whether MarkCleanedUp has been called.
+func (s *StrategySetup) IsCleanedUp() bool {
+	return s != nil && s.cleanedUp
+}
+
 // Cleanup performs any necessary teardown. For worktrees, it logs the
 // worktree path for the user but does not auto-remove it. For branches,
 // it is a no-op. Safe to call multiple times.

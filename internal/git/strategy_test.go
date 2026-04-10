@@ -916,3 +916,212 @@ func TestMarkCleanedUp(t *testing.T) {
 	err := setup.Cleanup()
 	assert.NoError(t, err)
 }
+
+func TestMergeAndCleanupBranch(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.CommandContext(ctx, "git", args...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %s: %s", strings.Join(args, " "), string(out))
+	}
+	run("init")
+	run("config", "user.email", "test@test.com")
+	run("config", "user.name", "test")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "README.md"), []byte("init"), 0o644))
+	run("add", "README.md")
+	run("commit", "-m", "initial")
+
+	// Create and switch to fry branch
+	branchName := "fry/test-feature"
+	run("checkout", "-b", branchName)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "feature.go"), []byte("package main"), 0o644))
+	run("add", "feature.go")
+	run("commit", "-m", "add feature")
+
+	// Write strategy file
+	setup := &StrategySetup{
+		WorkDir:        dir,
+		OriginalDir:    dir,
+		BranchName:     branchName,
+		OriginalBranch: "main",
+		Strategy:       StrategyBranch,
+	}
+	require.NoError(t, PersistStrategy(dir, setup))
+
+	err := MergeAndCleanupBranch(ctx, setup)
+	require.NoError(t, err)
+
+	// Verify: we're back on original branch
+	cmd := exec.CommandContext(ctx, "git", "branch", "--show-current")
+	cmd.Dir = dir
+	out, _ := cmd.Output()
+	assert.Equal(t, "main", strings.TrimSpace(string(out)))
+
+	// Verify: feature.go exists on main after merge
+	_, err = os.Stat(filepath.Join(dir, "feature.go"))
+	assert.NoError(t, err, "feature.go should exist on main after merge")
+
+	// Verify: fry branch is deleted
+	cmd = exec.CommandContext(ctx, "git", "branch", "--list", branchName)
+	cmd.Dir = dir
+	out, _ = cmd.Output()
+	assert.Empty(t, strings.TrimSpace(string(out)), "fry branch should be deleted")
+
+	// Verify: strategy file is removed
+	_, err = os.Stat(filepath.Join(dir, config.GitStrategyFile))
+	assert.True(t, os.IsNotExist(err), "git-strategy.txt should be removed")
+}
+
+func TestMergeAndCleanupBranch_NilSetup(t *testing.T) {
+	t.Parallel()
+	assert.NoError(t, MergeAndCleanupBranch(context.Background(), nil))
+}
+
+func TestMergeAndCleanupBranch_WrongStrategy(t *testing.T) {
+	t.Parallel()
+	setup := &StrategySetup{Strategy: StrategyWorktree, IsWorktree: true}
+	assert.NoError(t, MergeAndCleanupBranch(context.Background(), setup))
+}
+
+func TestRestoreBranchAfterFailure(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.CommandContext(ctx, "git", args...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %s: %s", strings.Join(args, " "), string(out))
+	}
+	run("init")
+	run("config", "user.email", "test@test.com")
+	run("config", "user.name", "test")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "README.md"), []byte("init"), 0o644))
+	run("add", "README.md")
+	run("commit", "-m", "initial")
+
+	// Create and switch to fry branch
+	branchName := "fry/broken-feature"
+	run("checkout", "-b", branchName)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "broken.go"), []byte("package broken"), 0o644))
+	run("add", "broken.go")
+	run("commit", "-m", "broken commit")
+
+	// Write strategy file
+	strategyPath := filepath.Join(dir, config.GitStrategyFile)
+	require.NoError(t, os.MkdirAll(filepath.Dir(strategyPath), 0o755))
+	require.NoError(t, os.WriteFile(strategyPath, []byte("strategy=branch\nbranch=fry/broken-feature"), 0o644))
+
+	setup := &StrategySetup{
+		WorkDir:        dir,
+		OriginalDir:    dir,
+		BranchName:     branchName,
+		OriginalBranch: "main",
+		Strategy:       StrategyBranch,
+	}
+
+	err := RestoreBranchAfterFailure(ctx, setup)
+	require.NoError(t, err)
+
+	// Verify: we're back on original branch
+	cmd := exec.CommandContext(ctx, "git", "branch", "--show-current")
+	cmd.Dir = dir
+	out, _ := cmd.Output()
+	assert.Equal(t, "main", strings.TrimSpace(string(out)))
+
+	// Verify: fry branch still exists (preserved for inspection)
+	cmd = exec.CommandContext(ctx, "git", "branch", "--list", branchName)
+	cmd.Dir = dir
+	out, _ = cmd.Output()
+	assert.NotEmpty(t, strings.TrimSpace(string(out)), "fry branch should be preserved")
+
+	// Verify: strategy file is removed
+	_, err = os.Stat(filepath.Join(dir, config.GitStrategyFile))
+	assert.True(t, os.IsNotExist(err), "git-strategy.txt should be removed")
+}
+
+func TestRestoreBranchAfterFailure_AlreadyOnOriginal(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.CommandContext(ctx, "git", args...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %s: %s", strings.Join(args, " "), string(out))
+	}
+	run("init")
+	run("config", "user.email", "test@test.com")
+	run("config", "user.name", "test")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "README.md"), []byte("init"), 0o644))
+	run("add", "README.md")
+	run("commit", "-m", "initial")
+
+	setup := &StrategySetup{
+		WorkDir:        dir,
+		OriginalDir:    dir,
+		BranchName:     "fry/feature",
+		OriginalBranch: "main",
+		Strategy:       StrategyBranch,
+	}
+
+	err := RestoreBranchAfterFailure(ctx, setup)
+	assert.NoError(t, err, "should be no-op when already on original branch")
+}
+
+func TestCleanupWorktrees(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.CommandContext(ctx, "git", args...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %s: %s", strings.Join(args, " "), string(out))
+	}
+	run("init")
+	run("config", "user.email", "test@test.com")
+	run("config", "user.name", "test")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "README.md"), []byte("init"), 0o644))
+	run("add", "README.md")
+	run("commit", "-m", "initial")
+
+	// Create a worktree under .fry-worktrees/
+	wtDir := filepath.Join(dir, config.GitWorktreeDir, "test-wt")
+	require.NoError(t, os.MkdirAll(filepath.Dir(wtDir), 0o755))
+	run("worktree", "add", "-b", "fry/test-wt", wtDir)
+
+	// Verify worktree exists
+	_, err := os.Stat(wtDir)
+	require.NoError(t, err)
+
+	removed := CleanupWorktrees(ctx, dir)
+	assert.Equal(t, 1, removed)
+
+	// Verify worktree dir is gone
+	_, err = os.Stat(wtDir)
+	assert.True(t, os.IsNotExist(err), "worktree dir should be removed")
+}
+
+func TestCleanupWorktrees_EmptyDir(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	removed := CleanupWorktrees(context.Background(), dir)
+	assert.Equal(t, 0, removed)
+}

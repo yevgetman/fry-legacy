@@ -19,7 +19,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/yevgetman/fry/internal/agent"
-	"github.com/yevgetman/fry/internal/archive"
 	"github.com/yevgetman/fry/internal/audit"
 	"github.com/yevgetman/fry/internal/color"
 	"github.com/yevgetman/fry/internal/config"
@@ -29,6 +28,7 @@ import (
 	"github.com/yevgetman/fry/internal/docker"
 	"github.com/yevgetman/fry/internal/engine"
 	"github.com/yevgetman/fry/internal/epic"
+	"github.com/yevgetman/fry/internal/finalize"
 	"github.com/yevgetman/fry/internal/git"
 	"github.com/yevgetman/fry/internal/githubissue"
 	"github.com/yevgetman/fry/internal/lock"
@@ -76,6 +76,7 @@ var (
 	runSARIF                 bool
 	runJSONReport            bool
 	runShowTokens            bool
+	runObserver              bool
 	runNoObserver            bool
 	runTriageOnly            bool
 	runModel                 string
@@ -779,7 +780,7 @@ var runCmd = &cobra.Command{
 		writeCurrentBuildStatus()
 
 		// Initialize observer metacognitive layer
-		observerEnabled := !runNoObserver && !runDryRun && ep.EffortLevel != epic.EffortFast
+		observerEnabled := runObserver && !runNoObserver && !runDryRun && ep.EffortLevel != epic.EffortFast
 		settings := consciousness.LoadSettings()
 		var telemetryFlag *bool
 		if runNoTelemetry {
@@ -2482,26 +2483,6 @@ var runCmd = &cobra.Command{
 			_ = tw.Flush()
 		}
 
-		if exitErr == nil && ((startSprint == 1 && endSprint == ep.TotalSprints) || auditOnlyResume) {
-			archivePath, archiveErr := archive.Archive(projectPath)
-			if archiveErr != nil {
-				fmt.Fprintf(os.Stderr, "fry: warning: auto-archive failed: %v\n", archiveErr)
-			} else {
-				frlog.Log("  ARCHIVE  build artifacts archived to %s", archivePath)
-			}
-		}
-
-		// Merge worktree branch on successful completion
-		if exitErr == nil && strategySetup != nil && strategySetup.IsWorktree {
-			frlog.Log("  GIT: merging worktree branch %s into %s...", strategySetup.BranchName, strategySetup.OriginalBranch)
-			if mergeErr := git.MergeAndCleanupWorktree(ctx, strategySetup); mergeErr != nil {
-				frlog.Log("WARNING: worktree merge failed: %v", mergeErr)
-			} else {
-				frlog.Log("  GIT: worktree merged and cleaned up")
-				strategySetup.MarkCleanedUp() // prevent deferred Cleanup from printing stale message
-			}
-		}
-
 		// Final build status update
 		if exitErr != nil {
 			buildStatus.Build.Status = "failed"
@@ -2531,7 +2512,14 @@ var runCmd = &cobra.Command{
 			<-uploadDone
 		}
 
-		steering.CleanupAll(projectPath)
+		// Auto-finalize: archive .fry/, clean up git state, remove steering
+		// artifacts so the repo is ready for a new fry run.
+		finalize.Finalize(ctx, finalize.FinalizeOpts{
+			ProjectPath:         projectPath,
+			OriginalProjectPath: originalProjectPath,
+			StrategySetup:       strategySetup,
+			BuildErr:            exitErr,
+		})
 
 		return exitErr
 	},
@@ -2591,7 +2579,8 @@ func init() {
 	runCmd.Flags().BoolVar(&runSARIF, "sarif", false, "Write build-audit.sarif in SARIF 2.1.0 format alongside build-audit.md")
 	runCmd.Flags().BoolVar(&runJSONReport, "json-report", false, "Write build-report.json with structured sprint results")
 	runCmd.Flags().BoolVar(&runShowTokens, "show-tokens", false, "Print per-sprint token usage summary to stderr after the run")
-	runCmd.Flags().BoolVar(&runNoObserver, "no-observer", false, "Disable the observer metacognitive layer")
+	runCmd.Flags().BoolVar(&runObserver, "observer", false, "Enable the observer metacognitive layer")
+	runCmd.Flags().BoolVar(&runNoObserver, "no-observer", false, "Disable the observer metacognitive layer (default)")
 	runCmd.Flags().BoolVar(&runTriageOnly, "triage-only", false, "Run triage classification and exit without generating artifacts")
 	runCmd.Flags().StringVar(&runModel, "model", "", "Override agent model for sprints (e.g. opus[1m], sonnet, haiku)")
 	runCmd.Flags().BoolVar(&runTelemetry, "telemetry", false, "Enable experience upload to consciousness API")
