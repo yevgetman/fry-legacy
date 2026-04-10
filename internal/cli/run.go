@@ -265,6 +265,36 @@ var runCmd = &cobra.Command{
 		copilotSupervisor := copilot.StartSupervisor(projectPath)
 		defer copilotSupervisor.Stop()
 
+		// Early copilot bootstrap: start the copilot immediately so it
+		// can watch prepare/triage for hangs and failures. Epic details
+		// are unknown at this point — we use placeholders and update the
+		// manifest once the epic is parsed and the worktree is set up.
+		if copilotShouldBootstrap(cmd, "") {
+			copilotEngine := resolveCopilotEngine()
+			frySrcDir := copilot.DiscoverFrySourceDir(runCopilotFrySource)
+			passive := runCopilotPassive || frySrcDir == ""
+			earlyResult, earlyErr := copilot.Bootstrap(copilot.BootstrapOpts{
+				ProjectDir:   projectPath,
+				FrySourceDir: frySrcDir,
+				Engine:       copilotEngine,
+				Model:        runCopilotModel,
+				EpicName:     "(preparing)",
+				EffortLevel:  "unknown",
+				TotalSprints: 0,
+				BuildPID:     os.Getpid(),
+				Interval:     runCopilotInterval,
+				RunID:        time.Now().UTC().Format("20060102-150405"),
+				Passive:      passive,
+				DryRun:       runDryRun,
+				Stdout:       cmd.OutOrStdout(),
+			})
+			if earlyErr != nil {
+				frlog.Log("WARNING: early copilot bootstrap failed: %v", earlyErr)
+			} else if earlyResult != nil && earlyResult.Scheduler != nil {
+				copilotSupervisor.SetScheduler(earlyResult.Scheduler)
+			}
+		}
+
 		printMigrationHintIfNeeded(cmd.OutOrStdout(), projectPath, epicArg)
 
 		if runTriageOnly && epicExists {
@@ -788,13 +818,22 @@ var runCmd = &cobra.Command{
 			}
 		}
 
-		// Copilot bootstrap (Phase 11). Auto-enables at max effort unless
-		// --no-copilot was set explicitly. Manual --copilot=<engine> wins
-		// at any effort level.
+		// Copilot promotion (Phase 11). Now that the epic is parsed and
+		// the worktree is set up, re-bootstrap the copilot with full
+		// context (epic name, sprint count, effort level, worktree path).
+		// If the copilot was early-bootstrapped above, this restarts it
+		// with real details. If not (auto-enable for max effort), this
+		// is the first bootstrap.
 		if copilotShouldBootstrap(cmd, ep.EffortLevel) {
 			copilotEngine := resolveCopilotEngine()
 			frySrcDir := copilot.DiscoverFrySourceDir(runCopilotFrySource)
 			passive := runCopilotPassive || frySrcDir == ""
+
+			// Relocate the supervisor to the worktree path if it changed.
+			if projectPath != originalProjectPath {
+				copilotSupervisor.Relocate(projectPath)
+			}
+
 			bootstrapResult, bootErr := copilot.Bootstrap(copilot.BootstrapOpts{
 				ProjectDir:   projectPath,
 				FrySourceDir: frySrcDir,
@@ -819,10 +858,6 @@ var runCmd = &cobra.Command{
 					frlog.Log("  COPILOT: active session %s (engine=%s, interval=%s)",
 						bootstrapResult.Manifest.SessionID, copilotEngine, runCopilotInterval)
 				}
-				// Hand the scheduler to the supervisor so it can
-				// manage the copilot lifecycle (stop on signal,
-				// restart on request, etc.). The supervisor's
-				// deferred Stop() will clean up the scheduler.
 				if bootstrapResult.Scheduler != nil {
 					copilotSupervisor.SetScheduler(bootstrapResult.Scheduler)
 				}

@@ -64,11 +64,25 @@ func (sv *Supervisor) Stop() {
 
 // SetScheduler allows fry main to hand off an already-running scheduler
 // (from the --copilot bootstrap path) to the supervisor. The supervisor
-// will then manage its lifecycle (stop on signal, etc.).
+// will then manage its lifecycle (stop on signal, etc.). If a previous
+// scheduler is running, it is stopped first.
 func (sv *Supervisor) SetScheduler(sched *TickScheduler) {
 	sv.mu.Lock()
-	defer sv.mu.Unlock()
+	old := sv.scheduler
 	sv.scheduler = sched
+	sv.mu.Unlock()
+	if old != nil && old != sched {
+		old.Stop()
+	}
+}
+
+// Relocate updates the supervisor's project directory. Used when fry
+// main redirects to a worktree after prepare/triage — the supervisor
+// must look for manifests in the new location.
+func (sv *Supervisor) Relocate(newDir string) {
+	sv.mu.Lock()
+	defer sv.mu.Unlock()
+	sv.projectDir = newDir
 }
 
 // run is the supervisor goroutine.
