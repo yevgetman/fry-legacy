@@ -19,6 +19,7 @@ import (
 	"github.com/yevgetman/fry/internal/shellhook"
 	"github.com/yevgetman/fry/internal/steering"
 	"github.com/yevgetman/fry/internal/verify"
+	"github.com/yevgetman/fry/templates"
 )
 
 const (
@@ -71,6 +72,11 @@ func RunSprint(ctx context.Context, cfg RunConfig) (*SprintResult, error) {
 	started := time.Now()
 	if cfg.Epic == nil || cfg.Sprint == nil {
 		return nil, fmt.Errorf("run sprint: epic and sprint are required")
+	}
+
+	agentPrompt, err := templates.LoadText(config.AgentInvocationFile)
+	if err != nil {
+		return nil, fmt.Errorf("run sprint: %w", err)
 	}
 
 	if err := InitSprintProgress(cfg.ProjectDir, cfg.Sprint.Number, cfg.Sprint.Name); err != nil {
@@ -192,7 +198,7 @@ func RunSprint(ctx context.Context, cfg RunConfig) (*SprintResult, error) {
 		preIterDiff := gitDiffStat(ctx, cfg.ProjectDir)
 
 		iterPath := filepath.Join(buildLogsDir, fmt.Sprintf("sprint%d_iter%d_%s.log", cfg.Sprint.Number, iter, time.Now().Format("20060102_150405")))
-		output, err := agentrun.RunWithDualLogs(ctx, config.AgentInvocationPrompt, iterPath, sprintLogPath, agentrun.DualLogOpts{
+		output, err := agentrun.RunWithDualLogs(ctx, agentPrompt, iterPath, sprintLogPath, agentrun.DualLogOpts{
 			Engine:      cfg.Engine,
 			Model:       resolvedModel,
 			SessionType: engine.SessionSprint,

@@ -1,0 +1,1 @@
+Read and execute ALL instructions in .fry/audit-prompt.md. This is a sprint audit session. Follow the role, scope, and output instructions in the prompt file. Do NOT modify source or content files.

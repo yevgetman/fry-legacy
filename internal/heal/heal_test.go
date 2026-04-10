@@ -8,10 +8,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"github.com/yevgetman/fry/internal/config"
 	"github.com/yevgetman/fry/internal/engine"
 	"github.com/yevgetman/fry/internal/epic"
 	"github.com/yevgetman/fry/internal/verify"
+	"github.com/yevgetman/fry/templates"
 )
 
 func TestHealPromptStructure(t *testing.T) {
@@ -124,7 +126,9 @@ func TestHealLoopMaxAttempts(t *testing.T) {
 	assert.False(t, result.Healed)
 	assert.Len(t, mockEngine.prompts, 2)
 	for _, prompt := range mockEngine.prompts {
-		assert.Equal(t, config.HealInvocationPrompt, prompt)
+		healPrompt, loadErr := templates.LoadText(config.HealInvocationFile)
+		require.NoError(t, loadErr)
+		assert.Equal(t, healPrompt, prompt)
 	}
 }
 

@@ -5,7 +5,10 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/yevgetman/fry/internal/config"
+	"github.com/yevgetman/fry/templates"
 )
 
 func TestFryDirPathConsistency(t *testing.T) {
@@ -62,23 +65,41 @@ func TestPlansDirPathConsistency(t *testing.T) {
 	}
 }
 
-func TestInvocationPromptsNonEmpty(t *testing.T) {
+func TestInvocationFilePathsNonEmpty(t *testing.T) {
 	t.Parallel()
 
-	assert.NotEmpty(t, config.AgentInvocationPrompt)
-	assert.NotEmpty(t, config.HealInvocationPrompt)
+	assert.NotEmpty(t, config.AgentInvocationFile)
+	assert.NotEmpty(t, config.HealInvocationFile)
+}
+
+func TestInvocationPromptsLoadable(t *testing.T) {
+	t.Parallel()
+
+	paths := []string{
+		config.AgentInvocationFile,
+		config.HealInvocationFile,
+		config.AuditInvocationFile,
+		config.AuditVerifyInvocationFile,
+		config.AuditFixInvocationFile,
+		config.BuildAuditInvocationFile,
+		config.ContinueInvocationFile,
+		config.TriageInvocationFile,
+		config.ObserverInvocationFile,
+	}
+	for _, p := range paths {
+		text, err := templates.LoadText(p)
+		require.NoError(t, err, "failed to load %s", p)
+		assert.NotEmpty(t, text, "%s loaded empty content", p)
+	}
 }
 
 func TestAgentInvocationPromptIncludesBuildTestVerification(t *testing.T) {
 	t.Parallel()
 
-	// The agent invocation prompt must instruct the sprint agent to verify
-	// its work by running build/test commands before declaring completion.
-	// This is the baseline self-verification that applies regardless of
-	// effort level (the tiered quality directive in prompt.go layers
-	// additional rigor on top of this).
-	assert.Contains(t, config.AgentInvocationPrompt, "verify your work",
-		"AgentInvocationPrompt must instruct the agent to verify its work")
-	assert.Contains(t, config.AgentInvocationPrompt, "build and test commands",
-		"AgentInvocationPrompt must instruct the agent to run build/test commands")
+	prompt, err := templates.LoadText(config.AgentInvocationFile)
+	require.NoError(t, err)
+	assert.Contains(t, prompt, "verify your work",
+		"agent invocation prompt must instruct the agent to verify its work")
+	assert.Contains(t, prompt, "build and test commands",
+		"agent invocation prompt must instruct the agent to run build/test commands")
 }

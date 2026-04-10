@@ -14,6 +14,7 @@ import (
 	"github.com/yevgetman/fry/internal/engine"
 	"github.com/yevgetman/fry/internal/epic"
 	frylog "github.com/yevgetman/fry/internal/log"
+	"github.com/yevgetman/fry/templates"
 )
 
 // WakePoint identifies when the observer is woken up during a build.
@@ -159,6 +160,11 @@ func WakeUp(ctx context.Context, opts ObserverOpts) (*Observation, error) {
 		return nil, fmt.Errorf("observer wake-up: engine is required")
 	}
 
+	observerPrompt, err := templates.LoadText(config.ObserverInvocationFile)
+	if err != nil {
+		return nil, fmt.Errorf("observer wake-up: %w", err)
+	}
+
 	// Check context before doing work
 	select {
 	case <-ctx.Done():
@@ -212,7 +218,7 @@ func WakeUp(ctx context.Context, opts ObserverOpts) (*Observation, error) {
 		_ = logFile.Close()
 	}()
 
-	// 5. Invoke engine with ObserverInvocationPrompt
+	// 5. Invoke engine with observer invocation prompt
 	runOpts := engine.RunOpts{
 		Model:       opts.Model,
 		SessionType: engine.SessionObserver,
@@ -233,7 +239,7 @@ func WakeUp(ctx context.Context, opts ObserverOpts) (*Observation, error) {
 		runOpts.Stderr = logFile
 	}
 
-	output, _, runErr := opts.Engine.Run(ctx, config.ObserverInvocationPrompt, runOpts)
+	output, _, runErr := opts.Engine.Run(ctx, observerPrompt, runOpts)
 	if runErr != nil {
 		if ctx.Err() != nil {
 			return nil, fmt.Errorf("observer wake-up: %w", runErr)

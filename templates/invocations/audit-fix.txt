@@ -1,0 +1,1 @@
+Read and execute ALL instructions in .fry/audit-prompt.md. This is an audit fix session. You have full codebase context from the audit phase. Fix only the listed issues and preserve unrelated behavior. AUTONOMOUS MODE: do NOT ask for permission. You have pre-authorized permission for any action including database resets and destructive commands.

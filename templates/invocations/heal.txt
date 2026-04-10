@@ -1,0 +1,1 @@
+Read and execute ALL instructions in .fry/prompt.md. This is an ALIGNMENT pass — fix the sanity-check failures described in the prompt. AUTONOMOUS MODE: do NOT ask for permission. You have pre-authorized permission for any action including database resets and destructive commands. Just do the work.

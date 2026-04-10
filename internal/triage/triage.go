@@ -14,6 +14,7 @@ import (
 	frylog "github.com/yevgetman/fry/internal/log"
 	"github.com/yevgetman/fry/internal/prepare"
 	"github.com/yevgetman/fry/internal/textutil"
+	"github.com/yevgetman/fry/templates"
 )
 
 // TriageOpts configures the triage classifier.
@@ -45,6 +46,12 @@ func Classify(ctx context.Context, opts TriageOpts) *TriageDecision {
 	if opts.Engine == nil {
 		frylog.Log("WARNING: triage: no engine provided; defaulting to COMPLEX")
 		return &TriageDecision{Complexity: ComplexityComplex, Reason: "no engine available"}
+	}
+
+	triagePrompt, err := templates.LoadText(config.TriageInvocationFile)
+	if err != nil {
+		frylog.Log("WARNING: triage: %v; defaulting to COMPLEX", err)
+		return &TriageDecision{Complexity: ComplexityComplex, Reason: "prompt load error"}
 	}
 
 	prompt := buildTriagePrompt(opts)
@@ -91,7 +98,7 @@ func Classify(ctx context.Context, opts TriageOpts) *TriageDecision {
 
 	frylog.Log("▶ TRIAGE  classifying task complexity...  engine=%s  model=%s", opts.Engine.Name(), opts.Model)
 
-	output, _, runErr := opts.Engine.Run(ctx, config.TriageInvocationPrompt, runOpts)
+	output, _, runErr := opts.Engine.Run(ctx, triagePrompt, runOpts)
 	if runErr != nil && ctx.Err() != nil {
 		frylog.Log("WARNING: triage: context cancelled; defaulting to COMPLEX")
 		return &TriageDecision{Complexity: ComplexityComplex, Reason: "context cancelled"}

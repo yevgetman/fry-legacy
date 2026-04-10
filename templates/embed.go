@@ -6,5 +6,5 @@ import "embed"
 // including the identity layer files under identity/ and the copilot
 // prompt templates under copilot/.
 //
-//go:embed *.md identity/*.md identity/identity.json copilot/*.md
+//go:embed *.md identity/*.md identity/identity.json copilot/*.md invocations/*.txt
 var TemplateFS embed.FS

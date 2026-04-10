@@ -16,6 +16,7 @@ import (
 	"github.com/yevgetman/fry/internal/review"
 	"github.com/yevgetman/fry/internal/sprint"
 	"github.com/yevgetman/fry/internal/textutil"
+	"github.com/yevgetman/fry/templates"
 )
 
 const (
@@ -56,6 +57,11 @@ func RunBuildAudit(ctx context.Context, opts BuildAuditOpts) (*AuditResult, erro
 	}
 	if opts.Engine == nil {
 		return nil, fmt.Errorf("run build audit: engine is required")
+	}
+
+	buildAuditPrompt, err := templates.LoadText(config.BuildAuditInvocationFile)
+	if err != nil {
+		return nil, fmt.Errorf("run build audit: %w", err)
 	}
 
 	frylog.Log("▶ BUILD AUDIT  running final holistic audit for %q", opts.Epic.Name)
@@ -107,7 +113,7 @@ func RunBuildAudit(ctx context.Context, opts BuildAuditOpts) (*AuditResult, erro
 		runOpts.Stderr = logFile
 	}
 
-	output, _, runErr := opts.Engine.Run(ctx, config.BuildAuditInvocationPrompt, runOpts)
+	output, _, runErr := opts.Engine.Run(ctx, buildAuditPrompt, runOpts)
 	if runErr != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()

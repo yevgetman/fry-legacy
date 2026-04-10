@@ -1,0 +1,1 @@
+Read and execute ALL instructions in .fry/audit-prompt.md. This is an audit verify session. Verify only the listed issues, write the results to .fry/sprint-audit.txt, and do NOT modify source or content files.

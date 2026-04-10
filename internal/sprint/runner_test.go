@@ -16,6 +16,7 @@ import (
 	"github.com/yevgetman/fry/internal/epic"
 	frylog "github.com/yevgetman/fry/internal/log"
 	"github.com/yevgetman/fry/internal/verify"
+	"github.com/yevgetman/fry/templates"
 )
 
 // logCaptureMu serializes subtests that redirect the package-level frylog logger.
@@ -236,7 +237,9 @@ func TestRunSprintPassesWithPromiseAndChecks(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, StatusPass, result.Status)
 	assert.Len(t, mockEngine.prompts, 1)
-	assert.Equal(t, config.AgentInvocationPrompt, mockEngine.prompts[0])
+	agentPrompt, err := templates.LoadText(config.AgentInvocationFile)
+	require.NoError(t, err)
+	assert.Equal(t, agentPrompt, mockEngine.prompts[0])
 }
 
 func TestRunSprintFailsWithoutPrompt(t *testing.T) {

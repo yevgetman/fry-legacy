@@ -20,6 +20,7 @@ import (
 	"github.com/yevgetman/fry/internal/shellhook"
 	"github.com/yevgetman/fry/internal/steering"
 	"github.com/yevgetman/fry/internal/verify"
+	"github.com/yevgetman/fry/templates"
 )
 
 type HealOpts struct {
@@ -179,6 +180,11 @@ func RunHealLoop(ctx context.Context, opts HealOpts) (*HealResult, error) {
 		return nil, fmt.Errorf("run heal loop: engine is required")
 	}
 
+	healPrompt, err := templates.LoadText(config.HealInvocationFile)
+	if err != nil {
+		return nil, fmt.Errorf("run heal loop: %w", err)
+	}
+
 	cfg := effectiveHealConfig(opts)
 
 	buildLogsDir := filepath.Join(opts.ProjectDir, config.BuildLogsDir)
@@ -304,7 +310,7 @@ func RunHealLoop(ctx context.Context, opts HealOpts) (*HealResult, error) {
 			fmt.Sprintf("sprint%d_align%d_%s.log", opts.Sprint.Number, attempt, time.Now().Format("20060102_150405")),
 		)
 		healAgentRuns++
-		if _, err := agentrun.RunWithDualLogs(ctx, config.HealInvocationPrompt, healLogPath, opts.SprintLogFile, agentrun.DualLogOpts{
+		if _, err := agentrun.RunWithDualLogs(ctx, healPrompt, healLogPath, opts.SprintLogFile, agentrun.DualLogOpts{
 			Engine:      opts.Engine,
 			Model:       resolvedModel,
 			SessionType: engine.SessionHeal,

@@ -13,6 +13,7 @@ import (
 	"github.com/yevgetman/fry/internal/engine"
 	frylog "github.com/yevgetman/fry/internal/log"
 	"github.com/yevgetman/fry/internal/textutil"
+	"github.com/yevgetman/fry/templates"
 )
 
 // AnalyzeOpts configures the LLM analysis agent.
@@ -37,6 +38,11 @@ type continueJSON struct {
 func Analyze(ctx context.Context, opts AnalyzeOpts) (*ContinueDecision, error) {
 	if opts.Engine == nil {
 		return nil, fmt.Errorf("continue analyze: engine is required")
+	}
+
+	continuePrompt, err := templates.LoadText(config.ContinueInvocationFile)
+	if err != nil {
+		return nil, fmt.Errorf("continue analyze: %w", err)
 	}
 
 	report := FormatReport(opts.State)
@@ -90,7 +96,7 @@ func Analyze(ctx context.Context, opts AnalyzeOpts) (*ContinueDecision, error) {
 		runOpts.Stderr = logFile
 	}
 
-	output, _, runErr := opts.Engine.Run(ctx, config.ContinueInvocationPrompt, runOpts)
+	output, _, runErr := opts.Engine.Run(ctx, continuePrompt, runOpts)
 	if runErr != nil && ctx.Err() == nil {
 		frylog.Log("WARNING: continue agent exited with error (non-fatal): %v", runErr)
 	} else if runErr != nil {
