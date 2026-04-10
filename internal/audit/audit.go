@@ -575,10 +575,9 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 			}
 
 			nowResolved := countResolved(activeFindings)
-			totalFixable := countFixableProductFindings(activeFindings, includeLow)
 			remaining := filterFixableProductFindings(activeFindings, includeLow)
 			frylog.Log("  AUDIT VERIFY  cycle %d  fix %d/%d — %d of %d resolved",
-				cycle, fixIter, maxInner, nowResolved, totalFixable)
+				cycle, fixIter, maxInner, nowResolved, nowResolved+len(remaining))
 
 			if len(remaining) == 0 {
 				break
