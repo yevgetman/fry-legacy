@@ -452,9 +452,10 @@ func PromoteCopilot(opts PromoteOpts) error {
 			return fmt.Errorf("promote copilot: create target dir: %w", err)
 		}
 		if err := os.Rename(oldCopilotDir, newCopilotDir); err != nil {
-			// If rename fails (cross-device), fall through and write
-			// in the new location without moving.
+			// Rename fails on cross-device links. Copy the directory
+			// contents so events.txt, wakes/, and other state survive.
 			_ = os.MkdirAll(newCopilotDir, 0o755)
+			_ = copyDirContents(oldCopilotDir, newCopilotDir)
 		}
 	}
 
@@ -495,4 +496,28 @@ func modelSuffix(model string) string {
 		return ""
 	}
 	return " " + model
+}
+
+// copyDirContents copies all files and subdirectories from src to dst.
+// Used as a fallback when os.Rename fails (cross-device link). Errors
+// on individual files are skipped — best-effort copy.
+func copyDirContents(src, dst string) error {
+	return filepath.WalkDir(src, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil // skip unreadable entries
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return nil
+		}
+		target := filepath.Join(dst, rel)
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil // skip unreadable files
+		}
+		return os.WriteFile(target, data, 0o644)
+	})
 }

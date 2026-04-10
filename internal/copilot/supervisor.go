@@ -65,15 +65,19 @@ func (sv *Supervisor) Stop() {
 // SetScheduler allows fry main to hand off an already-running scheduler
 // (from the --copilot bootstrap path) to the supervisor. The supervisor
 // will then manage its lifecycle (stop on signal, etc.). If a previous
-// scheduler is running, it is stopped first.
+// scheduler is running, it is stopped first. The old scheduler is
+// stopped under the lock to prevent poll() from racing with the swap.
 func (sv *Supervisor) SetScheduler(sched *TickScheduler) {
 	sv.mu.Lock()
 	old := sv.scheduler
 	sv.scheduler = sched
-	sv.mu.Unlock()
+	// Stop the old scheduler under the lock so poll() cannot observe a
+	// half-swapped state. TickScheduler.Stop() is safe to call under
+	// an external lock — it only closes a channel and waits.
 	if old != nil && old != sched {
 		old.Stop()
 	}
+	sv.mu.Unlock()
 }
 
 // Relocate updates the supervisor's project directory. Used when fry
@@ -133,6 +137,13 @@ func (sv *Supervisor) poll() {
 	manifest, err := ReadManifest(sv.projectDir)
 	if err != nil || manifest == nil || manifest.SessionID == "" {
 		// No manifest or unreadable — nothing to start.
+		return
+	}
+
+	// Re-check stop signal after the manifest read to close the race
+	// window where stop-requested appears between the first check and
+	// the manifest read.
+	if _, err := os.Stat(stopPath); err == nil {
 		return
 	}
 

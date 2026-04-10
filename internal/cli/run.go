@@ -818,6 +818,15 @@ var runCmd = &cobra.Command{
 			}
 		}
 
+		// Always relocate the supervisor to the worktree if the project
+		// path changed, so it looks for manifests in the right place.
+		// This must happen regardless of whether copilotShouldBootstrap
+		// is true — the early bootstrap may have started the supervisor
+		// before the worktree existed.
+		if projectPath != originalProjectPath {
+			copilotSupervisor.Relocate(projectPath)
+		}
+
 		// Copilot promotion (Phase 11). Now that the epic is parsed and
 		// the worktree is set up, update the existing copilot session
 		// with real epic details. The session stays continuous — same
@@ -846,19 +855,12 @@ var runCmd = &cobra.Command{
 				} else {
 					frlog.Log("  COPILOT: promoted with epic=%q, sprints=%d", ep.Name, ep.TotalSprints)
 				}
-				// Relocate the supervisor to the worktree path if it changed.
-				if projectPath != originalProjectPath {
-					copilotSupervisor.Relocate(projectPath)
-				}
+				// Supervisor already relocated unconditionally above.
 			} else {
 				// No early bootstrap (auto-enable for max effort) — first bootstrap now.
 				copilotEngine := resolveCopilotEngine()
 				frySrcDir := copilot.DiscoverFrySourceDir(runCopilotFrySource)
 				passive := runCopilotPassive || frySrcDir == ""
-
-				if projectPath != originalProjectPath {
-					copilotSupervisor.Relocate(projectPath)
-				}
 
 				bootstrapResult, bootErr := copilot.Bootstrap(copilot.BootstrapOpts{
 					ProjectDir:   projectPath,
