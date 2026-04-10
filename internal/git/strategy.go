@@ -382,7 +382,9 @@ func MergeAndCleanupBranchWith(ctx context.Context, setup *StrategySetup, ex Exe
 }
 
 // RestoreBranchAfterFailure checks out the original branch without merging.
-// The fry branch is preserved for inspection.
+// The fry branch is preserved for inspection. Note: checkout may fail if the
+// failed build left uncommitted changes that conflict with the original branch;
+// this is caught and returned as an error for the caller to log as a warning.
 func RestoreBranchAfterFailure(ctx context.Context, setup *StrategySetup) error {
 	return RestoreBranchAfterFailureWith(ctx, setup, DefaultExecutor)
 }

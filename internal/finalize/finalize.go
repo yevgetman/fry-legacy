@@ -48,9 +48,11 @@ func Finalize(ctx context.Context, opts FinalizeOpts) {
 		gitCleanup(ctx, opts)
 	}
 
-	// 4. Steering cleanup on both dirs.
-	steering.CleanupAll(opts.ProjectPath)
-	if opts.ProjectPath != opts.OriginalProjectPath {
+	// 4. Steering cleanup. For worktree builds the worktree directory may
+	// have been removed by git cleanup, so only clean the original dir.
+	if opts.ProjectPath == opts.OriginalProjectPath {
+		steering.CleanupAll(opts.ProjectPath)
+	} else {
 		steering.CleanupAll(opts.OriginalProjectPath)
 	}
 }

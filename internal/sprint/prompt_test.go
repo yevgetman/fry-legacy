@@ -195,6 +195,54 @@ func TestAssemblePrompt_CodebaseContext_Present(t *testing.T) {
 		"Layer 0.5 (CODEBASE CONTEXT) should appear before Layer 2 (STRATEGIC PLAN)")
 }
 
+func TestAssemblePrompt_CodebaseContext_Sprint2_Pointer(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	codebasePath := filepath.Join(dir, config.CodebaseFile)
+	require.NoError(t, os.MkdirAll(filepath.Dir(codebasePath), 0o755))
+	require.NoError(t, os.WriteFile(codebasePath,
+		[]byte("# Codebase: Test\n\n## Summary\nA test project.\n"), 0o644))
+
+	prompt, err := AssemblePrompt(PromptOpts{
+		ProjectDir:   dir,
+		SprintNumber: 2,
+		EffortLevel:  epic.EffortStandard,
+		SprintPrompt: "Continue the feature.",
+	})
+	require.NoError(t, err)
+
+	// Sprint 2 at standard effort should get a lightweight pointer
+	assert.Contains(t, prompt, "CODEBASE CONTEXT (reference)")
+	assert.NotContains(t, prompt, "A test project")
+	assert.NotContains(t, prompt, "CODEBASE MEMORIES")
+}
+
+func TestAssemblePrompt_CodebaseContext_Sprint2_FullAtMaxEffort(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	codebasePath := filepath.Join(dir, config.CodebaseFile)
+	require.NoError(t, os.MkdirAll(filepath.Dir(codebasePath), 0o755))
+	require.NoError(t, os.WriteFile(codebasePath,
+		[]byte("# Codebase: Test\n\n## Summary\nA max effort project.\n"), 0o644))
+
+	prompt, err := AssemblePrompt(PromptOpts{
+		ProjectDir:   dir,
+		SprintNumber: 3,
+		EffortLevel:  epic.EffortMax,
+		SprintPrompt: "Handle all edge cases.",
+	})
+	require.NoError(t, err)
+
+	// Sprint 3 at max effort should get full codebase context
+	assert.Contains(t, prompt, "CODEBASE CONTEXT =====")
+	assert.NotContains(t, prompt, "(reference)")
+	assert.Contains(t, prompt, "A max effort project")
+}
+
 func TestAssemblePrompt_CodebaseContext_Absent(t *testing.T) {
 	t.Parallel()
 

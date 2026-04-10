@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/yevgetman/fry/internal/config"
 )
@@ -34,6 +35,50 @@ func InitEpicProgress(projectDir string, epicName string) error {
 
 func ShouldResetEpicProgress(startSprint, currentSprint, endSprint, totalSprints int) bool {
 	return startSprint == 1 && currentSprint == 1 && endSprint == totalSprints
+}
+
+// MaxSprintProgressBytes is the size threshold above which sprint-progress.txt
+// is auto-compacted to prevent prompt bloat. The agent reads this file every
+// iteration, so keeping it bounded saves significant tokens on long sprints.
+const MaxSprintProgressBytes = 20_000
+
+// TailLinesAfterCompaction is how many lines to keep from the end of
+// sprint-progress.txt after compaction. These are the most recent entries
+// that the agent needs to avoid repeating work.
+const TailLinesAfterCompaction = 30
+
+// CompactSprintProgressIfNeeded checks if sprint-progress.txt exceeds
+// MaxSprintProgressBytes and truncates it to a header + the last
+// TailLinesAfterCompaction lines if so. This is a mechanical operation
+// (no LLM call) that preserves the most recent context while discarding
+// older entries the agent no longer needs.
+func CompactSprintProgressIfNeeded(projectDir string) {
+	path := filepath.Join(projectDir, config.SprintProgressFile)
+	info, err := os.Stat(path)
+	if err != nil || info.Size() <= MaxSprintProgressBytes {
+		return
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+
+	lines := strings.Split(string(data), "\n")
+	if len(lines) <= TailLinesAfterCompaction+5 {
+		return // not enough lines to compact
+	}
+
+	// Keep a header noting compaction occurred, then the last N lines.
+	header := lines[0] // preserve the "# Sprint N: ..." header
+	tail := lines[len(lines)-TailLinesAfterCompaction:]
+
+	var b strings.Builder
+	b.WriteString(header)
+	b.WriteString("\n\n[Earlier progress entries compacted to save context. Recent entries below.]\n\n")
+	b.WriteString(strings.Join(tail, "\n"))
+
+	_ = os.WriteFile(path, []byte(b.String()), 0o644)
 }
 
 func AppendToSprintProgress(projectDir string, content string) error {

@@ -65,7 +65,8 @@ func ArchiveTo(srcDir, destDir string) (string, error) {
 }
 
 // moveDir renames src to dst, falling back to a recursive copy + remove
-// when the rename fails (e.g. cross-device moves).
+// when the rename fails (e.g. cross-device moves). Source removal failure
+// after a successful copy is treated as non-fatal since the archive exists.
 func moveDir(src, dst string) error {
 	if err := os.Rename(src, dst); err == nil {
 		return nil
@@ -74,11 +75,15 @@ func moveDir(src, dst string) error {
 	if err := copyDir(src, dst); err != nil {
 		return err
 	}
-	return os.RemoveAll(src)
+	if err := os.RemoveAll(src); err != nil {
+		fmt.Fprintf(os.Stderr, "fry: warning: archive copied but source removal failed: %v\n", err)
+	}
+	return nil
 }
 
 // moveFile renames src to dst, falling back to read+write+remove
-// when the rename fails (e.g. cross-device moves).
+// when the rename fails (e.g. cross-device moves). Source removal failure
+// after a successful copy is treated as non-fatal since the archive exists.
 func moveFile(src, dst string) error {
 	if err := os.Rename(src, dst); err == nil {
 		return nil
@@ -90,7 +95,10 @@ func moveFile(src, dst string) error {
 	if err := os.WriteFile(dst, data, 0o644); err != nil {
 		return err
 	}
-	return os.Remove(src)
+	if err := os.Remove(src); err != nil {
+		fmt.Fprintf(os.Stderr, "fry: warning: archive copied but source removal failed: %v\n", err)
+	}
+	return nil
 }
 
 // copyDir recursively copies src to dst.

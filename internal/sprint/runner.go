@@ -159,6 +159,9 @@ func RunSprint(ctx context.Context, cfg RunConfig) (*SprintResult, error) {
 			return nil, fmt.Errorf("run sprint pre-iteration hook: %w", err)
 		}
 
+		// Auto-compact sprint progress if it's grown too large.
+		CompactSprintProgressIfNeeded(cfg.ProjectDir)
+
 		// Layer 1 — Tier A: Check for mid-build user directive
 		if directive, dErr := steering.ConsumeDirective(cfg.ProjectDir); dErr != nil {
 			frylog.Log("  STEERING: warning: failed to read directive: %v", dErr)
@@ -229,10 +232,18 @@ func RunSprint(ctx context.Context, cfg RunConfig) (*SprintResult, error) {
 			consecutiveNoop = 0
 		}
 
-		if consecutiveNoop >= noopThreshold && cfg.Sprint.Promise != "" && len(checks) > 0 {
-			_, passCount, totalCount := verify.RunChecks(ctx, checks, cfg.Sprint.Number, cfg.ProjectDir)
-			if totalCount > 0 && passCount == totalCount {
-				frylog.Log("  No file changes for %d consecutive iterations and sanity checks pass — exiting early.", consecutiveNoop)
+		if consecutiveNoop >= noopThreshold {
+			if len(checks) > 0 {
+				_, passCount, totalCount := verify.RunChecks(ctx, checks, cfg.Sprint.Number, cfg.ProjectDir)
+				if totalCount > 0 && passCount == totalCount {
+					frylog.Log("  No file changes for %d consecutive iterations and sanity checks pass — exiting early.", consecutiveNoop)
+					break
+				}
+			} else if consecutiveNoop >= noopThreshold+1 {
+				// No sanity checks defined: use a slightly higher threshold
+				// before concluding the agent is done, since we can't validate
+				// completion via checks.
+				frylog.Log("  No file changes for %d consecutive iterations (no sanity checks) — exiting early.", consecutiveNoop)
 				break
 			}
 		}
