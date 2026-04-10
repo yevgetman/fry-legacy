@@ -206,6 +206,108 @@ var copilotAttachCmd = &cobra.Command{
 	},
 }
 
+// ----- start -----
+
+var copilotStartCmd = &cobra.Command{
+	Use:           "start",
+	Short:         "Start a copilot mid-build (if one wasn't started with --copilot)",
+	SilenceUsage:  true,
+	SilenceErrors: true,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		dir, _ := cmd.Flags().GetString("project-dir")
+		dir = resolveCopilotProjectDir(dir)
+
+		// Refuse if a copilot is already active.
+		if existing, _ := copilot.ReadManifest(dir); existing != nil && existing.SessionID != "" {
+			return fmt.Errorf("copilot already active (session %s) — use `fry copilot restart` to replace it", existing.SessionID)
+		}
+
+		// Read the current build state to get context.
+		status, err := agent.ReadBuildStatus(dir)
+		if err != nil || status == nil {
+			return fmt.Errorf("read build status: no build-status.json found — is a build running in this directory?")
+		}
+		if status.Build.Status != "running" {
+			return fmt.Errorf("build is not running (status: %s) — copilot requires an active build", status.Build.Status)
+		}
+
+		copilotEngine, _ := cmd.Flags().GetString("engine")
+		if copilotEngine == "" {
+			copilotEngine = "claude"
+		}
+		interval, _ := cmd.Flags().GetString("interval")
+		if interval == "" {
+			interval = "10m"
+		}
+		model, _ := cmd.Flags().GetString("model")
+
+		frySrcDir := copilot.DiscoverFrySourceDir("")
+
+		// Clear any stale stop-requested file so the supervisor doesn't
+		// immediately refuse to start the scheduler.
+		_ = os.Remove(filepath.Join(dir, config.CopilotStopRequestedFile))
+
+		// Find the build PID. Try build-status first, fall back to the
+		// lock file PID.
+		buildPID := 0
+		if lockPID := readLockPID(dir); lockPID > 0 && processAlive(lockPID) {
+			buildPID = lockPID
+		}
+
+		runID := ""
+		if status.Run != nil {
+			runID = status.Run.RunID
+		}
+
+		bootstrapResult, bootErr := copilot.Bootstrap(copilot.BootstrapOpts{
+			ProjectDir:   dir,
+			FrySourceDir: frySrcDir,
+			Engine:       copilotEngine,
+			Model:        model,
+			EpicName:     status.Build.Epic,
+			EffortLevel:  status.Build.Effort,
+			TotalSprints: status.Build.TotalSprints,
+			BuildPID:     buildPID,
+			Interval:     interval,
+			RunID:        runID,
+			Stdout:       cmd.OutOrStdout(),
+		})
+		if bootErr != nil {
+			return fmt.Errorf("bootstrap copilot: %w", bootErr)
+		}
+
+		// The scheduler from Bootstrap is short-lived here — the CLI
+		// process exits soon. The supervisor inside fry main will detect
+		// the new manifest and start its own scheduler. Stop the CLI's
+		// scheduler so it doesn't linger.
+		if bootstrapResult != nil && bootstrapResult.Scheduler != nil {
+			bootstrapResult.Scheduler.Stop()
+		}
+
+		fmt.Fprintln(cmd.OutOrStdout(), "Copilot started. The build's supervisor will begin ticking shortly.")
+		return nil
+	},
+}
+
+func init() {
+	copilotStartCmd.Flags().String("engine", "claude", "Copilot engine")
+	copilotStartCmd.Flags().String("interval", "10m", "Wake interval (1m–1h)")
+	copilotStartCmd.Flags().String("model", "", "Override copilot agent model")
+}
+
+// readLockPID reads the build lock file PID if present.
+func readLockPID(dir string) int {
+	data, err := os.ReadFile(filepath.Join(dir, ".fry/.fry.lock"))
+	if err != nil {
+		return 0
+	}
+	var pid int
+	if _, err := fmt.Sscanf(strings.TrimSpace(string(data)), "%d", &pid); err != nil {
+		return 0
+	}
+	return pid
+}
+
 // ----- stop -----
 
 var copilotStopCmd = &cobra.Command{
@@ -793,6 +895,7 @@ func init() {
 
 	copilotCmd.AddCommand(copilotStatusCmd)
 	copilotCmd.AddCommand(copilotAttachCmd)
+	copilotCmd.AddCommand(copilotStartCmd)
 	copilotCmd.AddCommand(copilotStopCmd)
 	copilotCmd.AddCommand(copilotRestartCmd)
 	copilotCmd.AddCommand(copilotTailCmd)

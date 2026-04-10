@@ -256,6 +256,15 @@ var runCmd = &cobra.Command{
 			}
 		}()
 
+		// Start the copilot supervisor. It runs for the lifetime of the
+		// build and manages the copilot scheduler lifecycle: starts the
+		// scheduler when a manifest appears (from --copilot bootstrap or
+		// `fry copilot start`), stops it on `fry copilot stop`. This
+		// replaces the previous direct scheduler defer with a unified
+		// lifecycle manager.
+		copilotSupervisor := copilot.StartSupervisor(projectPath)
+		defer copilotSupervisor.Stop()
+
 		printMigrationHintIfNeeded(cmd.OutOrStdout(), projectPath, epicArg)
 
 		if runTriageOnly && epicExists {
@@ -810,14 +819,12 @@ var runCmd = &cobra.Command{
 					frlog.Log("  COPILOT: active session %s (engine=%s, interval=%s)",
 						bootstrapResult.Manifest.SessionID, copilotEngine, runCopilotInterval)
 				}
-				// Stop the fry-main-owned tick scheduler when fry main
-				// exits. The scheduler runs in a goroutine for the
-				// lifetime of the build; without this defer it would
-				// keep ticking past fry exit (until the goroutine is
-				// killed by the OS along with the process).
+				// Hand the scheduler to the supervisor so it can
+				// manage the copilot lifecycle (stop on signal,
+				// restart on request, etc.). The supervisor's
+				// deferred Stop() will clean up the scheduler.
 				if bootstrapResult.Scheduler != nil {
-					sched := bootstrapResult.Scheduler
-					defer func() { sched.Stop() }()
+					copilotSupervisor.SetScheduler(bootstrapResult.Scheduler)
 				}
 			}
 		}

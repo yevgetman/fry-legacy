@@ -123,7 +123,9 @@ func (s *TickScheduler) run() {
 		return
 	case <-warmup.C:
 	}
-	s.tick()
+	if s.tick() {
+		return
+	}
 
 	// Steady state: tick every interval until stopped.
 	ticker := time.NewTicker(s.opts.Interval)
@@ -133,7 +135,9 @@ func (s *TickScheduler) run() {
 		case <-s.stopCh:
 			return
 		case <-ticker.C:
-			s.tick()
+			if s.tick() {
+				return
+			}
 		}
 	}
 }
@@ -281,13 +285,18 @@ func (s *TickScheduler) checkRestart() bool {
 // the copilot session, sends the wake message, waits for the subprocess
 // to exit, and writes a per-tick result log to .fry/copilot/wakes/.
 //
+// Returns true if the scheduler should exit (stop-requested detected).
+//
 // Errors during a tick are non-fatal — fry main's job is to keep the
 // build moving, not to fail the build because the copilot's tick
 // subprocess hit an error. Per-tick errors are recorded in the wake's
 // result.log and as observer events; the scheduler keeps running.
-func (s *TickScheduler) tick() {
+func (s *TickScheduler) tick() bool {
+	if s.checkStop() {
+		return true
+	}
 	if s.checkRestart() {
-		return
+		return false
 	}
 	s.wakeCounter++
 	startedAt := time.Now().UTC()
@@ -378,6 +387,20 @@ func (s *TickScheduler) tick() {
 		Type: observer.EventCopilotWakeEnd,
 		Data: endData,
 	})
+	return false
+}
+
+// checkStop returns true if a stop-requested signal file exists, meaning
+// `fry copilot stop` was called. The scheduler should exit its run loop.
+func (s *TickScheduler) checkStop() bool {
+	stopPath := filepath.Join(s.opts.ProjectDir, config.CopilotStopRequestedFile)
+	if _, err := os.Stat(stopPath); err != nil {
+		return false
+	}
+	_ = AppendEventsText(s.opts.ProjectDir, fmt.Sprintf(
+		"%s  Scheduler stopped (stop-requested signal detected).",
+		time.Now().UTC().Format(time.RFC3339)))
+	return true
 }
 
 // wakeMessageAt returns the prompt that fry main passes to each tick

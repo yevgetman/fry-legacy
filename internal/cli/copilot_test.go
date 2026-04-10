@@ -387,6 +387,23 @@ func TestCopilotRestartImmediateRebootstrap(t *testing.T) {
 	assert.Contains(t, string(evData), "restarted via CLI")
 }
 
+func TestCopilotStartRefusesIfAlreadyActive(t *testing.T) {
+	dir := t.TempDir()
+	plantCopilotManifest(t, dir, "existing-session")
+
+	_, err := runRootCmd(t, "copilot", "start", "--project-dir", dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "already active")
+}
+
+func TestCopilotStartRefusesWithoutBuildStatus(t *testing.T) {
+	dir := t.TempDir()
+	// No build-status.json exists.
+	_, err := runRootCmd(t, "copilot", "start", "--project-dir", dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "build status")
+}
+
 func TestCopilotRestartWithoutManifest(t *testing.T) {
 	dir := t.TempDir()
 

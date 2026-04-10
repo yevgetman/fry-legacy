@@ -272,6 +272,47 @@ func TestCheckRestartDetectsSignalAndUpdatesSession(t *testing.T) {
 	}
 }
 
+func TestCheckStopReturnsFalseWhenNoFile(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	s := &TickScheduler{opts: SchedulerOpts{ProjectDir: dir}}
+	assert.False(t, s.checkStop())
+}
+
+func TestCheckStopReturnsTrueWhenFileExists(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, config.CopilotDir), 0o755))
+	stopPath := filepath.Join(dir, config.CopilotStopRequestedFile)
+	require.NoError(t, os.WriteFile(stopPath, []byte("now\n"), 0o644))
+
+	s := &TickScheduler{opts: SchedulerOpts{ProjectDir: dir}}
+	assert.True(t, s.checkStop())
+
+	// Events should record the stop.
+	data, err := os.ReadFile(filepath.Join(dir, config.CopilotEventsTextFile))
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "Scheduler stopped")
+}
+
+func TestTickReturnsTrueOnStop(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, config.CopilotDir), 0o755))
+	stopPath := filepath.Join(dir, config.CopilotStopRequestedFile)
+	require.NoError(t, os.WriteFile(stopPath, []byte("now\n"), 0o644))
+
+	s := &TickScheduler{
+		opts: SchedulerOpts{
+			ProjectDir: dir,
+			SessionID:  "test",
+			Engine:     "claude",
+			Interval:   10 * time.Minute,
+		},
+	}
+	assert.True(t, s.tick(), "tick should return true when stop is requested")
+}
+
 func TestCheckRestartResetsWakeCounter(t *testing.T) {
 	t.Parallel()
 
