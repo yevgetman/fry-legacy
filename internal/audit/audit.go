@@ -23,6 +23,7 @@ import (
 	"github.com/yevgetman/fry/internal/severity"
 	"github.com/yevgetman/fry/internal/steering"
 	"github.com/yevgetman/fry/internal/textutil"
+	"github.com/yevgetman/fry/templates"
 )
 
 // Finding represents a single structured audit finding tracked across iterations.
@@ -124,6 +125,14 @@ const (
 	// zero net progress (no new findings resolved, no new findings discovered
 	// that differ from the resolved ledger) before the audit exits.
 	outerStaleThreshold = 2
+
+	// highEffortModerateAcceptCycles is the number of outer cycles after
+	// which high-effort audits accept remaining MODERATE findings and
+	// move on. At high effort, the audit should be pragmatic: if only
+	// MODERATEs remain after several cycles of genuine fix attempts,
+	// they are borderline issues not worth burning more budget on. Max
+	// effort does NOT have this cap — extreme persistence is the intent.
+	highEffortModerateAcceptCycles = 3
 )
 
 // RunAuditLoop runs a two-level audit loop for a sprint.
@@ -145,6 +154,15 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 	defer func() {
 		_ = cleanupAuditSessions(opts.ProjectDir, opts.Sprint.Number)
 	}()
+
+	auditInvocation, err := templates.LoadText(config.AuditInvocationFile)
+	if err != nil {
+		return nil, fmt.Errorf("run audit loop: %w", err)
+	}
+	fixInvocation, err := templates.LoadText(config.AuditFixInvocationFile)
+	if err != nil {
+		return nil, fmt.Errorf("run audit loop: %w", err)
+	}
 
 	maxOuter := effectiveOuterCycles(opts.Epic, opts.Complexity)
 	maxInner := effectiveInnerIter(opts.Epic, opts.Complexity)
@@ -248,7 +266,7 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 		)
 		auditPromptBytes := promptFileSize(promptPath)
 		auditStarted := time.Now()
-		auditOutput, err := runAgentWithLog(ctx, opts, config.AuditInvocationPrompt, auditLogPath, auditModel, engine.SessionAudit, auditSession)
+		auditOutput, err := runAgentWithLog(ctx, opts, auditInvocation, auditLogPath, auditModel, engine.SessionAudit, auditSession)
 		auditTokens := tokenmetrics.ParseTokens(opts.Engine.Name(), auditOutput)
 		auditMetrics.Record(CallMetric{
 			SessionType:          engine.SessionAudit,
@@ -440,6 +458,7 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 					break
 				}
 			}
+
 		}
 		prevActionableCount = countActionableFindings(activeFindings)
 
@@ -523,7 +542,7 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 			preFixFingerprint := git.WorktreeFingerprintForNoopDetection(ctx, opts.ProjectDir)
 			fixPromptBytes := promptFileSize(promptPath)
 			fixStarted := time.Now()
-			fixOutput, err := runAgentWithLog(ctx, opts, config.AuditFixInvocationPrompt, fixLogPath, fixModel, engine.SessionAuditFix, fixSession)
+			fixOutput, err := runAgentWithLog(ctx, opts, fixInvocation, fixLogPath, fixModel, engine.SessionAuditFix, fixSession)
 			postFixFingerprint := git.WorktreeFingerprintForNoopDetection(ctx, opts.ProjectDir)
 			fixWasNoOp := preFixFingerprint == postFixFingerprint
 			fixTokens := tokenmetrics.ParseTokens(opts.Engine.Name(), fixOutput)
@@ -639,6 +658,27 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 		}, nil
 	}
 
+	// High-effort pragmatic acceptance: if only MODERATEs remain after
+	// the audit loop exits (via stale detection, cycle cap, or any other
+	// mechanism), accept them at high effort. The fix agent had a fair
+	// shot across multiple cycles; continuing or failing the sprint over
+	// borderline issues wastes budget. Max effort does NOT get this —
+	// it requires every MODERATE to be resolved.
+	if opts.Epic != nil && opts.Epic.EffortLevel == epic.EffortHigh &&
+		lastCycle >= highEffortModerateAcceptCycles &&
+		unresolvedMaxSev == "MODERATE" {
+		frylog.Log("  AUDIT: accepting remaining MODERATEs at high effort after %d cycles (pragmatic acceptance)", lastCycle)
+		auditMetrics.ConvergedAtCycle = lastCycle
+		return &AuditResult{
+			Passed: true, Iterations: lastCycle,
+			MaxSeverity: unresolvedMaxSev, SeverityCounts: unresolvedCounts,
+			BlockerCounts: unresolvedBlockerCounts,
+			Blockers:      unresolvedBlockers,
+			Complexity:    opts.Complexity,
+			Metrics:       auditMetrics,
+		}, nil
+	}
+
 	return &AuditResult{
 		Passed:             false,
 		Blocking:           isBlockingSeverity(unresolvedMaxSev) || len(unresolvedBlockers) > 0,
@@ -673,6 +713,11 @@ func runSingleLowFixPass(ctx context.Context, opts AuditOpts, findings []Finding
 
 	sortFindingsFIFO(findings)
 
+	lowFixPrompt, err := templates.LoadText(config.AuditFixInvocationFile)
+	if err != nil {
+		return 0, fmt.Errorf("run single low fix pass: %w", err)
+	}
+
 	fixModel := engine.ResolveModel(opts.Epic.AuditModel, opts.Engine.Name(), string(opts.Epic.EffortLevel), engine.SessionAuditFix)
 	frylog.Log("  AUDIT FIX  cycle %d  LOW-only fix — targeting %d issues  engine=%s  model=%s",
 		cycle, len(findings), opts.Engine.Name(), fixModel)
@@ -689,7 +734,7 @@ func runSingleLowFixPass(ctx context.Context, opts AuditOpts, findings []Finding
 	preFixFingerprint := git.WorktreeFingerprintForNoopDetection(ctx, opts.ProjectDir)
 	fixPromptBytes := promptFileSize(promptPath)
 	fixStarted := time.Now()
-	fixOutput, err := runAgentWithLog(ctx, opts, config.AuditFixInvocationPrompt, fixLogPath, fixModel, engine.SessionAuditFix, nil)
+	fixOutput, err := runAgentWithLog(ctx, opts, lowFixPrompt, fixLogPath, fixModel, engine.SessionAuditFix, nil)
 	postFixFingerprint := git.WorktreeFingerprintForNoopDetection(ctx, opts.ProjectDir)
 	fixWasNoOp := preFixFingerprint == postFixFingerprint
 	if auditMetrics != nil {
@@ -2158,6 +2203,11 @@ func runVerifyPass(
 ) error {
 	_ = os.Remove(auditFilePath)
 
+	verifyInvocation, err := templates.LoadText(config.AuditVerifyInvocationFile)
+	if err != nil {
+		return fmt.Errorf("run audit loop: %w", err)
+	}
+
 	verifyPrompt := buildVerifyPrompt(opts, unresolved, recentFixDiff)
 	if err := writePromptFile(promptPath, verifyPrompt); err != nil {
 		return fmt.Errorf("run audit loop: write verify prompt: %w", err)
@@ -2183,7 +2233,7 @@ func runVerifyPass(
 	)
 	verifyPromptBytes := promptFileSize(promptPath)
 	verifyStarted := time.Now()
-	verifyOutput, err := runAgentWithLog(ctx, opts, config.AuditVerifyInvocationPrompt, verifyLogPath, verifyModel, engine.SessionAuditVerify, nil)
+	verifyOutput, err := runAgentWithLog(ctx, opts, verifyInvocation, verifyLogPath, verifyModel, engine.SessionAuditVerify, nil)
 	if err != nil {
 		return err
 	}

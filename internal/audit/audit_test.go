@@ -10,10 +10,19 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"github.com/yevgetman/fry/internal/config"
 	"github.com/yevgetman/fry/internal/engine"
 	"github.com/yevgetman/fry/internal/epic"
+	"github.com/yevgetman/fry/templates"
 )
+
+func loadInvocation(t *testing.T, path string) string {
+	t.Helper()
+	text, err := templates.LoadText(path)
+	require.NoError(t, err)
+	return text
+}
 
 // --- stub engine ---
 
@@ -1399,7 +1408,7 @@ func TestRunAuditLoopPassesImmediately(t *testing.T) {
 	assert.Equal(t, 1, result.Iterations)
 	// Only audit agent called, not fix or verify
 	assert.Len(t, eng.prompts, 1)
-	assert.Equal(t, config.AuditInvocationPrompt, eng.prompts[0])
+	assert.Equal(t, loadInvocation(t, config.AuditInvocationFile), eng.prompts[0])
 }
 
 // TestRunAuditLoopHonorsExplicitPassWithSeverityRubric is a regression test
@@ -1434,7 +1443,7 @@ func TestRunAuditLoopHonorsExplicitPassWithSeverityRubric(t *testing.T) {
 	assert.Equal(t, "", result.MaxSeverity)
 	// Only the audit agent ran — no fix or verify call.
 	assert.Len(t, eng.prompts, 1)
-	assert.Equal(t, config.AuditInvocationPrompt, eng.prompts[0])
+	assert.Equal(t, loadInvocation(t, config.AuditInvocationFile), eng.prompts[0])
 }
 
 func TestRunAuditLoopExhaustsCritical(t *testing.T) {
@@ -1482,6 +1491,72 @@ func TestRunAuditLoopExhaustsModerateAdvisory(t *testing.T) {
 	assert.False(t, result.Blocking) // MODERATE is advisory
 	assert.Equal(t, 2, result.Iterations)
 	assert.Equal(t, "MODERATE", result.MaxSeverity)
+}
+
+func TestRunAuditLoopHighEffortAcceptsModeratesAfterThreeCycles(t *testing.T) {
+	t.Parallel()
+
+	// At high effort, persistent MODERATEs should be accepted after
+	// highEffortModerateAcceptCycles (3) outer cycles. The stub always
+	// writes MODERATE findings so they never resolve — simulating a
+	// borderline issue the fix agent can't eliminate.
+	eng := &stubEngine{
+		name: "codex",
+		sideEffect: func(projectDir string, callIndex int) {
+			writeFile(t, filepath.Join(projectDir, config.SprintAuditFile), moderateFindings)
+		},
+	}
+	opts := makeOpts(t, eng)
+	opts.Epic.EffortLevel = epic.EffortHigh
+	opts.Epic.MaxAuditIterations = 0 // let effectiveOuterCycles decide
+
+	result, err := RunAuditLoop(context.Background(), opts)
+	require.NoError(t, err)
+	assert.True(t, result.Passed, "high effort should accept MODERATEs after %d cycles", highEffortModerateAcceptCycles)
+	assert.Equal(t, highEffortModerateAcceptCycles, result.Iterations)
+	assert.Equal(t, "MODERATE", result.MaxSeverity)
+}
+
+func TestRunAuditLoopMaxEffortDoesNotAcceptModeratesEarly(t *testing.T) {
+	t.Parallel()
+
+	// At max effort, MODERATEs should NOT be pragmatically accepted.
+	// The audit should exhaust the cycle cap.
+	eng := &stubEngine{
+		name: "codex",
+		sideEffect: func(projectDir string, callIndex int) {
+			writeFile(t, filepath.Join(projectDir, config.SprintAuditFile), moderateFindings)
+		},
+	}
+	opts := makeOpts(t, eng)
+	opts.Epic.EffortLevel = epic.EffortMax
+	opts.Epic.MaxAuditIterations = 4 // small cap for test speed
+
+	result, err := RunAuditLoop(context.Background(), opts)
+	require.NoError(t, err)
+	assert.False(t, result.Passed, "max effort must NOT accept MODERATEs early")
+	assert.Equal(t, "MODERATE", result.MaxSeverity)
+}
+
+func TestRunAuditLoopHighEffortDoesNotAcceptHighFindings(t *testing.T) {
+	t.Parallel()
+
+	// HIGH severity findings should never be pragmatically accepted,
+	// even at high effort.
+	eng := &stubEngine{
+		name: "codex",
+		sideEffect: func(projectDir string, callIndex int) {
+			writeFile(t, filepath.Join(projectDir, config.SprintAuditFile), highFindings)
+		},
+	}
+	opts := makeOpts(t, eng)
+	opts.Epic.EffortLevel = epic.EffortHigh
+	opts.Epic.MaxAuditIterations = 4
+
+	result, err := RunAuditLoop(context.Background(), opts)
+	require.NoError(t, err)
+	assert.False(t, result.Passed, "HIGH findings must not be accepted even at high effort")
+	assert.Equal(t, "HIGH", result.MaxSeverity)
 }
 
 func TestRunAuditLoopExhaustsHighBlocking(t *testing.T) {
@@ -1650,7 +1725,7 @@ func TestRunAuditLoopInnerLoopResolvesAll(t *testing.T) {
 	assert.True(t, result.Passed)
 	assert.Equal(t, 2, result.Iterations)
 	require.Len(t, eng.prompts, 4)
-	assert.Equal(t, config.AuditVerifyInvocationPrompt, eng.prompts[2])
+	assert.Equal(t, loadInvocation(t, config.AuditVerifyInvocationFile), eng.prompts[2])
 }
 
 func TestRunAuditLoopInnerLoopPartialResolution(t *testing.T) {
@@ -2100,8 +2175,8 @@ func TestRunAuditLoopHighEffortFixesLow(t *testing.T) {
 
 	// Fix prompt should have been called and should contain both issues
 	require.True(t, len(eng.prompts) >= 2, "expected at least audit + fix prompts")
-	// The fix agent prompt (index 1) is AuditFixInvocationPrompt
-	assert.Equal(t, config.AuditFixInvocationPrompt, eng.prompts[1])
+	// The fix agent prompt (index 1) is the audit fix invocation
+	assert.Equal(t, loadInvocation(t, config.AuditFixInvocationFile), eng.prompts[1])
 }
 
 func TestRunAuditLoopMediumEffortIgnoresLow(t *testing.T) {
@@ -2163,8 +2238,8 @@ func TestRunAuditLoopLowOnlyMaxEffortRunsOneFix(t *testing.T) {
 	assert.Equal(t, 1, result.Iterations)
 	// Expect: audit + fix = 2 calls. No re-audit after fix.
 	assert.Len(t, eng.prompts, 2)
-	assert.Equal(t, config.AuditInvocationPrompt, eng.prompts[0])
-	assert.Equal(t, config.AuditFixInvocationPrompt, eng.prompts[1])
+	assert.Equal(t, loadInvocation(t, config.AuditInvocationFile), eng.prompts[0])
+	assert.Equal(t, loadInvocation(t, config.AuditFixInvocationFile), eng.prompts[1])
 }
 
 func TestRunAuditLoopLowOnlyNonMaxExitsImmediately(t *testing.T) {
@@ -2187,7 +2262,7 @@ func TestRunAuditLoopLowOnlyNonMaxExitsImmediately(t *testing.T) {
 	assert.Equal(t, 1, result.Iterations)
 	// Only audit called, no fix agent
 	assert.Len(t, eng.prompts, 1)
-	assert.Equal(t, config.AuditInvocationPrompt, eng.prompts[0])
+	assert.Equal(t, loadInvocation(t, config.AuditInvocationFile), eng.prompts[0])
 }
 
 func TestRunAuditLoopMaxEffortHighFindingsStillLoops(t *testing.T) {
