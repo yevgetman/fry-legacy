@@ -91,6 +91,14 @@ const criticalFindings = "## Summary\nBad stuff.\n\n## Findings\n- **Location:**
 const highFindings = "## Summary\nBugs found.\n\n## Findings\n- **Location:** src/api.go:20\n- **Description:** Missing error handling\n- **Severity:** HIGH\n- **Recommended Fix:** Handle error\n\n## Verdict\nFAIL\n"
 const moderateFindings = "## Summary\nMinor issues.\n\n## Findings\n- **Location:** src/util.go:5\n- **Description:** Edge case not handled\n- **Severity:** MODERATE\n- **Recommended Fix:** Add boundary check\n\n## Verdict\nFAIL\n"
 const cleanAudit = "## Summary\nAll good.\n\n## Findings\nNone.\n\n## Verdict\nPASS\n"
+
+// passWithSeverityRubric simulates the regression where the audit agent
+// returns an explicit PASS verdict but also includes a "Severity Levels"
+// reference table or echoes the format template — both contain severity
+// keywords (e.g., "**Severity:** CRITICAL | HIGH | MODERATE | LOW") that
+// the legacy parser misread as a real CRITICAL finding, escalating a clean
+// PASS into a phantom CRITICAL.
+const passWithSeverityRubric = "## Summary\nAll checks resolved.\n\n## Findings\nNone.\n\n## Severity Reference\n- **Severity:** CRITICAL | HIGH | MODERATE | LOW\n\n## Verdict\nPASS\n"
 const reviewStyleHighFinding = "**Findings**\n\n1. High: Missing error handling in booking cancellation path.\n"
 const diffStyleHighFinding = "codex\nI wrote the audit to `.fry/sprint-audit.txt`.\ndiff --git a/.fry/sprint-audit.txt b/.fry/sprint-audit.txt\nnew file mode 100644\nindex 0000000..1111111\n--- /dev/null\n+++ b/.fry/sprint-audit.txt\n@@ -0,0 +1,8 @@\n+## Summary\n+Recovered from diff.\n+\n+## Findings\n+- **Location:** src/api.go:20\n+- **Description:** Missing error handling\n+- **Severity:** HIGH\n+\n+## Verdict\n+FAIL\n"
 const resolvedVerifySummary = "All listed issues are marked `RESOLVED`."
@@ -1390,6 +1398,41 @@ func TestRunAuditLoopPassesImmediately(t *testing.T) {
 	assert.True(t, result.Passed)
 	assert.Equal(t, 1, result.Iterations)
 	// Only audit agent called, not fix or verify
+	assert.Len(t, eng.prompts, 1)
+	assert.Equal(t, config.AuditInvocationPrompt, eng.prompts[0])
+}
+
+// TestRunAuditLoopHonorsExplicitPassWithSeverityRubric is a regression test
+// for a bug observed in the meetingly3 build (sprint 4 audit cycle 3): the
+// audit agent returned a clean PASS verdict, but the audit file also echoed
+// the format template / severity rubric, causing parseAuditSeverity to
+// classify the report as CRITICAL. With no parseable structured findings,
+// the loop fell back to a phantom CRITICAL finding and burned the rest of
+// the cycle budget chasing a non-existent issue. The fix: when parseFindings
+// is empty AND the content has an explicit PASS verdict, trust the verdict.
+func TestRunAuditLoopHonorsExplicitPassWithSeverityRubric(t *testing.T) {
+	t.Parallel()
+
+	// Sanity-check that the rubric content reproduces the phantom-trigger
+	// conditions: severity scan returns non-PASS but parseFindings is empty.
+	require.Equal(t, "CRITICAL", parseAuditSeverity(passWithSeverityRubric))
+	require.Empty(t, parseFindings(passWithSeverityRubric))
+	require.True(t, explicitPassRe.MatchString(passWithSeverityRubric))
+
+	eng := &stubEngine{
+		name: "codex",
+		sideEffect: func(projectDir string, callIndex int) {
+			writeFile(t, filepath.Join(projectDir, config.SprintAuditFile), passWithSeverityRubric)
+		},
+	}
+	opts := makeOpts(t, eng)
+
+	result, err := RunAuditLoop(context.Background(), opts)
+	require.NoError(t, err)
+	assert.True(t, result.Passed, "explicit PASS verdict must override phantom CRITICAL fallback")
+	assert.Equal(t, 1, result.Iterations, "should pass on first cycle, no fix loop")
+	assert.Equal(t, "", result.MaxSeverity)
+	// Only the audit agent ran — no fix or verify call.
 	assert.Len(t, eng.prompts, 1)
 	assert.Equal(t, config.AuditInvocationPrompt, eng.prompts[0])
 }

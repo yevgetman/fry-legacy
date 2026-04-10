@@ -320,8 +320,28 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 		// Parse structured findings
 		currentFindings := decorateFindings(parseFindings(string(content)), cycle)
 
-		// Fallback: severity indicates issues but no structured findings parsed
+		// Fallback: severity indicates issues but no structured findings parsed.
+		// However, when the content also contains an explicit PASS verdict,
+		// trust the verdict over the severity scan. This avoids creating phantom
+		// CRITICAL findings when the agent echoes severity rubrics, format
+		// templates, or "Severity Levels" reference sections back into the
+		// report — situations where parseAuditSeverity picks up severity words
+		// that are not real findings. The explicit PASS is the agent's
+		// authoritative signal in that case.
 		if len(currentFindings) == 0 {
+			if explicitPassRe.MatchString(string(content)) {
+				frylog.Log("  AUDIT: pass (explicit PASS verdict; severity scan ignored — no structured findings)")
+				auditMetrics.RecordCycleSummary(cycle)
+				auditMetrics.OuterCycles = cycle
+				auditMetrics.ConvergedAtCycle = cycle
+				auditMetrics.FinalFindingCount = 0
+				return &AuditResult{
+					Passed: true, Iterations: cycle,
+					MaxSeverity: "", SeverityCounts: map[string]int{},
+					Complexity: opts.Complexity,
+					Metrics:    auditMetrics,
+				}, nil
+			}
 			currentFindings = decorateFindings([]Finding{{
 				Description: "Audit agent reported issues but structured findings could not be parsed. See raw audit output for details.",
 				Severity:    maxSev,
