@@ -193,6 +193,14 @@ var copilotAttachCmd = &cobra.Command{
 		if lookErr != nil {
 			return fmt.Errorf("locate %s: %w", attachCmd[0], lookErr)
 		}
+		// Chdir to the resolved project directory so the engine CLI
+		// finds the session under the correct project path. Without
+		// this, worktree builds break: the session was created from
+		// the worktree CWD but the user runs attach from the main
+		// checkout, so the engine looks in the wrong project.
+		if err := os.Chdir(dir); err != nil {
+			return fmt.Errorf("chdir to %s: %w", dir, err)
+		}
 		// Replace the current process with the engine CLI.
 		return syscall.Exec(execBin, attachCmd, os.Environ())
 	},
