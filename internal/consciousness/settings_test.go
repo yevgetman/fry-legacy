@@ -125,11 +125,11 @@ func TestTelemetryEnabled_SettingsFile(t *testing.T) {
 	assert.True(t, result)
 }
 
-func TestTelemetryEnabled_DefaultOn(t *testing.T) {
+func TestTelemetryEnabled_DefaultOff(t *testing.T) {
 	t.Parallel()
 
 	result := TelemetryEnabled(nil, Settings{})
-	assert.True(t, result)
+	assert.False(t, result)
 }
 
 func TestEnsureSettings_CreatesFile(t *testing.T) {
@@ -143,7 +143,7 @@ func TestEnsureSettings_CreatesFile(t *testing.T) {
 
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
-	assert.Contains(t, string(data), `"telemetry": true`)
+	assert.Contains(t, string(data), `"telemetry": false`)
 }
 
 func TestEnsureSettings_DoesNotOverwrite(t *testing.T) {
