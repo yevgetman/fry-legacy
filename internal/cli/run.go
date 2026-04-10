@@ -819,47 +819,72 @@ var runCmd = &cobra.Command{
 		}
 
 		// Copilot promotion (Phase 11). Now that the epic is parsed and
-		// the worktree is set up, re-bootstrap the copilot with full
-		// context (epic name, sprint count, effort level, worktree path).
-		// If the copilot was early-bootstrapped above, this restarts it
-		// with real details. If not (auto-enable for max effort), this
-		// is the first bootstrap.
+		// the worktree is set up, update the existing copilot session
+		// with real epic details. The session stays continuous — same
+		// session ID, same conversation history. The copilot picks up
+		// the new context on its next tick.
+		//
+		// If the copilot was NOT early-bootstrapped (auto-enable for max
+		// effort where effort is unknown until epic parse), do the first
+		// bootstrap here.
 		if copilotShouldBootstrap(cmd, ep.EffortLevel) {
-			copilotEngine := resolveCopilotEngine()
-			frySrcDir := copilot.DiscoverFrySourceDir(runCopilotFrySource)
-			passive := runCopilotPassive || frySrcDir == ""
-
-			// Relocate the supervisor to the worktree path if it changed.
-			if projectPath != originalProjectPath {
-				copilotSupervisor.Relocate(projectPath)
+			existingManifest, _ := copilot.ReadManifest(projectPath)
+			if existingManifest == nil && originalProjectPath != projectPath {
+				existingManifest, _ = copilot.ReadManifest(originalProjectPath)
 			}
 
-			bootstrapResult, bootErr := copilot.Bootstrap(copilot.BootstrapOpts{
-				ProjectDir:   projectPath,
-				FrySourceDir: frySrcDir,
-				Engine:       copilotEngine,
-				Model:        runCopilotModel,
-				EpicName:     ep.Name,
-				EffortLevel:  string(ep.EffortLevel),
-				TotalSprints: ep.TotalSprints,
-				BuildPID:     os.Getpid(),
-				Interval:     runCopilotInterval,
-				RunID:        time.Now().UTC().Format("20060102-150405"),
-				Passive:      passive,
-				DryRun:       runDryRun,
-				Stdout:       cmd.OutOrStdout(),
-			})
-			if bootErr != nil {
-				frlog.Log("WARNING: copilot bootstrap failed: %v", bootErr)
-			} else if bootstrapResult != nil && bootstrapResult.Manifest != nil {
-				if bootstrapResult.Manifest.Mode == copilot.ModePassive {
-					frlog.Log("  COPILOT: passive mode (no fry source dir found)")
-				} else if bootstrapResult.Manifest.Mode == copilot.ModeActive {
-					frlog.Log("  COPILOT: active session %s (engine=%s, interval=%s)",
-						bootstrapResult.Manifest.SessionID, copilotEngine, runCopilotInterval)
+			if existingManifest != nil && existingManifest.SessionID != "" {
+				// Copilot already running — promote with real details.
+				if promoteErr := copilot.PromoteCopilot(copilot.PromoteOpts{
+					ProjectDir:   projectPath,
+					OldDir:       originalProjectPath,
+					EpicName:     ep.Name,
+					EffortLevel:  string(ep.EffortLevel),
+					TotalSprints: ep.TotalSprints,
+				}); promoteErr != nil {
+					frlog.Log("WARNING: copilot promote failed: %v", promoteErr)
+				} else {
+					frlog.Log("  COPILOT: promoted with epic=%q, sprints=%d", ep.Name, ep.TotalSprints)
 				}
-				if bootstrapResult.Scheduler != nil {
-					copilotSupervisor.SetScheduler(bootstrapResult.Scheduler)
+				// Relocate the supervisor to the worktree path if it changed.
+				if projectPath != originalProjectPath {
+					copilotSupervisor.Relocate(projectPath)
+				}
+			} else {
+				// No early bootstrap (auto-enable for max effort) — first bootstrap now.
+				copilotEngine := resolveCopilotEngine()
+				frySrcDir := copilot.DiscoverFrySourceDir(runCopilotFrySource)
+				passive := runCopilotPassive || frySrcDir == ""
+
+				if projectPath != originalProjectPath {
+					copilotSupervisor.Relocate(projectPath)
+				}
+
+				bootstrapResult, bootErr := copilot.Bootstrap(copilot.BootstrapOpts{
+					ProjectDir:   projectPath,
+					FrySourceDir: frySrcDir,
+					Engine:       copilotEngine,
+					Model:        runCopilotModel,
+					EpicName:     ep.Name,
+					EffortLevel:  string(ep.EffortLevel),
+					TotalSprints: ep.TotalSprints,
+					BuildPID:     os.Getpid(),
+					Interval:     runCopilotInterval,
+					RunID:        time.Now().UTC().Format("20060102-150405"),
+					Passive:      passive,
+					DryRun:       runDryRun,
+					Stdout:       cmd.OutOrStdout(),
+				})
+				if bootErr != nil {
+					frlog.Log("WARNING: copilot bootstrap failed: %v", bootErr)
+				} else if bootstrapResult != nil && bootstrapResult.Manifest != nil {
+					if bootstrapResult.Manifest.Mode == copilot.ModeActive {
+						frlog.Log("  COPILOT: active session %s (engine=%s, interval=%s)",
+							bootstrapResult.Manifest.SessionID, copilotEngine, runCopilotInterval)
+					}
+					if bootstrapResult.Scheduler != nil {
+						copilotSupervisor.SetScheduler(bootstrapResult.Scheduler)
+					}
 				}
 			}
 		}

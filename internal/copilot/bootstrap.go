@@ -407,6 +407,89 @@ func writeBanner(w io.Writer, m *Manifest, suffix string) []string {
 	return lines
 }
 
+// PromoteOpts are the fields to update on an existing copilot manifest
+// after prepare/triage completes and the epic details are known.
+type PromoteOpts struct {
+	ProjectDir   string // new project dir (may be a worktree)
+	OldDir       string // original dir where the copilot was bootstrapped
+	EpicName     string
+	EffortLevel  string
+	TotalSprints int
+}
+
+// PromoteCopilot updates an existing copilot's manifest and bootstrap
+// prompt with real epic details, without creating a new session. The
+// copilot session stays continuous — same session ID, same conversation
+// history. The copilot picks up the new context on its next tick when
+// it re-reads the manifest and state snapshot.
+//
+// If ProjectDir differs from OldDir (worktree redirect), the copilot
+// directory is moved to the new location.
+func PromoteCopilot(opts PromoteOpts) error {
+	sourceDir := opts.OldDir
+	if sourceDir == "" {
+		sourceDir = opts.ProjectDir
+	}
+
+	manifest, err := ReadManifest(sourceDir)
+	if err != nil || manifest == nil {
+		return fmt.Errorf("promote copilot: no manifest at %s", sourceDir)
+	}
+
+	// Update manifest fields with real epic details.
+	manifest.EpicName = opts.EpicName
+	manifest.EffortLevel = opts.EffortLevel
+	manifest.TotalSprints = opts.TotalSprints
+
+	// If the project dir changed (worktree), relocate the copilot
+	// directory and update the manifest's BuildDir.
+	if opts.ProjectDir != sourceDir {
+		manifest.BuildDir = opts.ProjectDir
+
+		oldCopilotDir := filepath.Join(sourceDir, config.CopilotDir)
+		newCopilotDir := filepath.Join(opts.ProjectDir, config.CopilotDir)
+		if err := os.MkdirAll(filepath.Dir(newCopilotDir), 0o755); err != nil {
+			return fmt.Errorf("promote copilot: create target dir: %w", err)
+		}
+		if err := os.Rename(oldCopilotDir, newCopilotDir); err != nil {
+			// If rename fails (cross-device), fall through and write
+			// in the new location without moving.
+			_ = os.MkdirAll(newCopilotDir, 0o755)
+		}
+	}
+
+	targetDir := opts.ProjectDir
+	if err := WriteManifest(targetDir, manifest); err != nil {
+		return fmt.Errorf("promote copilot: write manifest: %w", err)
+	}
+
+	// Rewrite the bootstrap prompt with real values so the copilot can
+	// re-read it if its context was compacted.
+	bootstrapData := BootstrapData{
+		BuildDir:        opts.ProjectDir,
+		FrySourceDir:    manifest.FrySourceDir,
+		Engine:          manifest.Engine,
+		EpicName:        opts.EpicName,
+		EffortLevel:     opts.EffortLevel,
+		TotalSprints:    opts.TotalSprints,
+		StartedAt:       manifest.StartedAt,
+		Interval:        manifest.Interval,
+		IntervalMinutes: intervalMinutes(manifest.Interval),
+		SessionID:       manifest.SessionID,
+		RunID:           manifest.RunID,
+	}
+	if _, err := WriteBootstrapPromptFile(targetDir, bootstrapData); err != nil {
+		return fmt.Errorf("promote copilot: write prompt: %w", err)
+	}
+
+	_ = AppendEventsText(targetDir, fmt.Sprintf(
+		"%s  Copilot promoted: epic=%q, sprints=%d, effort=%s, dir=%s.",
+		time.Now().UTC().Format(time.RFC3339),
+		opts.EpicName, opts.TotalSprints, opts.EffortLevel, opts.ProjectDir))
+
+	return nil
+}
+
 func modelSuffix(model string) string {
 	if model == "" {
 		return ""
