@@ -225,6 +225,7 @@ const (
 	CopilotFinalSummaryFile          = ".fry/copilot/final-summary.md"
 	CopilotArchiveDir                = ".fry/copilot/archive"
 	CopilotStopRequestedFile         = ".fry/copilot/stop-requested"
+	CopilotRestartRequestedFile      = ".fry/copilot/restart-requested"
 	CopilotDefaultIntervalMinutes    = 10
 	CopilotMinIntervalSeconds        = 60   // 1m floor
 	CopilotMaxIntervalSeconds        = 3600 // 1h ceiling

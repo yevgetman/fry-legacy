@@ -204,12 +204,18 @@ func Bootstrap(opts BootstrapOpts) (*BootstrapResult, error) {
 			intervalDur = time.Duration(config.CopilotDefaultIntervalMinutes) * time.Minute
 		}
 		result.Scheduler = StartTickScheduler(SchedulerOpts{
-			ProjectDir: opts.ProjectDir,
-			SessionID:  sessionID,
-			Engine:     opts.Engine,
-			Model:      opts.Model,
-			Interval:   intervalDur,
-			BuildDir:   opts.ProjectDir,
+			ProjectDir:   opts.ProjectDir,
+			SessionID:    sessionID,
+			Engine:       opts.Engine,
+			Model:        opts.Model,
+			Interval:     intervalDur,
+			BuildDir:     opts.ProjectDir,
+			FrySourceDir: opts.FrySourceDir,
+			EpicName:     opts.EpicName,
+			EffortLevel:  opts.EffortLevel,
+			TotalSprints: opts.TotalSprints,
+			RunID:        opts.RunID,
+			BuildPID:     opts.BuildPID,
 		})
 	}
 

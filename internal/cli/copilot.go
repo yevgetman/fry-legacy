@@ -248,6 +248,41 @@ var copilotStopCmd = &cobra.Command{
 	},
 }
 
+// ----- restart -----
+
+var copilotRestartCmd = &cobra.Command{
+	Use:           "restart",
+	Short:         "Restart the copilot session with fresh templates (does NOT stop the build)",
+	SilenceUsage:  true,
+	SilenceErrors: true,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		dir, _ := cmd.Flags().GetString("project-dir")
+		dir = resolveCopilotProjectDir(dir)
+
+		manifest, err := copilot.ReadManifest(dir)
+		if err != nil {
+			return fmt.Errorf("read copilot manifest: %w", err)
+		}
+		if manifest == nil {
+			fmt.Fprintln(cmd.OutOrStdout(), "no copilot manifest found — nothing to restart")
+			return nil
+		}
+
+		flagPath := filepath.Join(dir, config.CopilotRestartRequestedFile)
+		if err := os.MkdirAll(filepath.Dir(flagPath), 0o755); err != nil {
+			return fmt.Errorf("create copilot dir: %w", err)
+		}
+		body := []byte(time.Now().UTC().Format(time.RFC3339) + "\n")
+		if err := os.WriteFile(flagPath, body, 0o644); err != nil {
+			return fmt.Errorf("write restart flag: %w", err)
+		}
+
+		fmt.Fprintln(cmd.OutOrStdout(), "Copilot restart requested. Next tick will bootstrap a fresh session.")
+		fmt.Fprintf(cmd.OutOrStdout(), "Current session %s will be replaced.\n", manifest.SessionID)
+		return nil
+	},
+}
+
 // ----- tail -----
 
 var copilotTailCmd = &cobra.Command{
@@ -674,6 +709,7 @@ func init() {
 	copilotCmd.AddCommand(copilotStatusCmd)
 	copilotCmd.AddCommand(copilotAttachCmd)
 	copilotCmd.AddCommand(copilotStopCmd)
+	copilotCmd.AddCommand(copilotRestartCmd)
 	copilotCmd.AddCommand(copilotTailCmd)
 	copilotCmd.AddCommand(copilotSummaryCmd)
 	copilotCmd.AddCommand(copilotListInterventionsCmd)

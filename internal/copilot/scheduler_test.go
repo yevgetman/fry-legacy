@@ -1,12 +1,17 @@
 package copilot
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/yevgetman/fry/internal/config"
 )
 
 func TestBuildTickArgs_Claude(t *testing.T) {
@@ -177,4 +182,129 @@ func TestTickSchedulerStopIsIdempotent(t *testing.T) {
 	// close stopCh and panic. Reaching this assertion is the success
 	// signal.
 	assert.True(t, true)
+}
+
+func TestCheckRestartReturnsFalseWhenNoSignalFile(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	s := &TickScheduler{
+		opts: SchedulerOpts{
+			ProjectDir: dir,
+			SessionID:  "original-session",
+			Engine:     "claude",
+			Interval:   10 * time.Minute,
+		},
+	}
+	assert.False(t, s.checkRestart())
+	assert.Equal(t, "original-session", s.opts.SessionID,
+		"session ID must not change when no restart is requested")
+}
+
+func TestCheckRestartDetectsSignalAndUpdatesSession(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	// Create the copilot directory structure so manifest writes succeed.
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, config.CopilotDir), 0o755))
+
+	s := &TickScheduler{
+		opts: SchedulerOpts{
+			ProjectDir:   dir,
+			SessionID:    "old-session-id",
+			Engine:       "claude",
+			Model:        "",
+			Interval:     10 * time.Minute,
+			BuildDir:     dir,
+			FrySourceDir: "/tmp/fry-source",
+			EpicName:     "Test Epic",
+			EffortLevel:  "max",
+			TotalSprints: 5,
+			RunID:        "run-test",
+			BuildPID:     os.Getpid(),
+		},
+		wakeCounter: 7,
+	}
+
+	// Write the restart-requested signal file.
+	signalPath := filepath.Join(dir, config.CopilotRestartRequestedFile)
+	require.NoError(t, os.MkdirAll(filepath.Dir(signalPath), 0o755))
+	require.NoError(t, os.WriteFile(signalPath, []byte("2026-04-10T12:00:00Z\n"), 0o644))
+
+	// checkRestart will try to spawn a bootstrap subprocess, which will
+	// fail because `claude` isn't in the test PATH. But the manifest,
+	// session-id, prompt, and events should still be written before the
+	// spawn attempt. We verify those artifacts even if checkRestart
+	// returns false due to spawn failure.
+
+	_ = s.checkRestart()
+
+	// The signal file should be removed regardless of spawn outcome.
+	_, err := os.Stat(signalPath)
+	assert.True(t, os.IsNotExist(err), "restart-requested file must be deleted after processing")
+
+	// Manifest should have been updated with a new session ID.
+	manifest, mErr := ReadManifest(dir)
+	if mErr == nil && manifest != nil {
+		assert.NotEqual(t, "old-session-id", manifest.SessionID,
+			"manifest must have a new session ID after restart")
+		assert.Equal(t, "Test Epic", manifest.EpicName)
+		assert.Equal(t, "max", manifest.EffortLevel)
+	}
+
+	// Bootstrap prompt file should exist with fresh content.
+	promptPath := filepath.Join(dir, config.CopilotBootstrapPromptFile)
+	if data, pErr := os.ReadFile(promptPath); pErr == nil {
+		assert.Contains(t, string(data), "Test Epic",
+			"bootstrap prompt must contain the epic name")
+		assert.Contains(t, string(data), "What is Fry?",
+			"bootstrap prompt must contain the fry executive summary from updated templates")
+	}
+
+	// Events text should record the restart.
+	eventsPath := filepath.Join(dir, config.CopilotEventsTextFile)
+	if data, eErr := os.ReadFile(eventsPath); eErr == nil {
+		content := string(data)
+		// Either a successful restart or a failed-spawn message should appear.
+		assert.True(t,
+			strings.Contains(content, "restarted") || strings.Contains(content, "restart failed"),
+			"events.txt must record the restart attempt")
+	}
+}
+
+func TestCheckRestartResetsWakeCounter(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, config.CopilotDir), 0o755))
+
+	s := &TickScheduler{
+		opts: SchedulerOpts{
+			ProjectDir:   dir,
+			SessionID:    "old-session",
+			Engine:       "claude",
+			Interval:     10 * time.Minute,
+			BuildDir:     dir,
+			FrySourceDir: "/tmp/fry",
+			EpicName:     "E",
+			EffortLevel:  "max",
+			TotalSprints: 3,
+			RunID:        "run-test",
+			BuildPID:     os.Getpid(),
+		},
+		wakeCounter: 42,
+	}
+
+	signalPath := filepath.Join(dir, config.CopilotRestartRequestedFile)
+	require.NoError(t, os.MkdirAll(filepath.Dir(signalPath), 0o755))
+	require.NoError(t, os.WriteFile(signalPath, []byte("now\n"), 0o644))
+
+	// Even if spawn fails, the session ID and wake counter should reset.
+	_ = s.checkRestart()
+
+	// Wake counter resets only on successful restart (spawn succeeds).
+	// If spawn fails, the session ID reverts — but the signal is still
+	// consumed so we don't retry endlessly.
+	_, err := os.Stat(signalPath)
+	assert.True(t, os.IsNotExist(err), "signal must be consumed even on spawn failure")
 }

@@ -47,7 +47,7 @@ type TickScheduler struct {
 }
 
 // SchedulerOpts is the configuration for a TickScheduler. All fields are
-// required.
+// required unless noted otherwise.
 type SchedulerOpts struct {
 	ProjectDir string
 	SessionID  string
@@ -55,6 +55,14 @@ type SchedulerOpts struct {
 	Model      string
 	Interval   time.Duration
 	BuildDir   string // shown in the wake message; usually equal to ProjectDir
+
+	// Fields needed for re-bootstrap on `fry copilot restart`.
+	FrySourceDir string
+	EpicName     string
+	EffortLevel  string
+	TotalSprints int
+	RunID        string
+	BuildPID     int
 }
 
 // StartTickScheduler launches the scheduler goroutine and returns
@@ -130,6 +138,123 @@ func (s *TickScheduler) run() {
 	}
 }
 
+// checkRestart checks for a restart-requested signal file. If present,
+// it generates a new session ID, renders a fresh bootstrap prompt (using
+// the current binary's embedded templates), spawns a new bootstrap
+// subprocess, and updates the manifest. Returns true if a restart was
+// performed — the caller should skip the normal tick in that case
+// because the bootstrap subprocess handles the first interaction.
+func (s *TickScheduler) checkRestart() bool {
+	signalPath := filepath.Join(s.opts.ProjectDir, config.CopilotRestartRequestedFile)
+	if _, err := os.Stat(signalPath); err != nil {
+		return false
+	}
+	_ = os.Remove(signalPath)
+
+	probe := EngineProbeResult{Engine: s.opts.Engine}
+	if s.opts.Engine == "claude" {
+		probe = ProbeClaudeCapabilities()
+	}
+
+	newSessionID, capMech, err := CaptureSessionID(probe)
+	if err != nil || newSessionID == "" {
+		_ = AppendEventsText(s.opts.ProjectDir, fmt.Sprintf(
+			"%s  copilot restart failed: could not capture new session ID: %v",
+			time.Now().UTC().Format(time.RFC3339), err))
+		return false
+	}
+
+	startedAt := time.Now().UTC().Format(time.RFC3339)
+	manifest := &Manifest{
+		SessionID:                 newSessionID,
+		BuildPID:                  s.opts.BuildPID,
+		BuildDir:                  s.opts.ProjectDir,
+		FrySourceDir:              s.opts.FrySourceDir,
+		Engine:                    s.opts.Engine,
+		Model:                     s.opts.Model,
+		StartedAt:                 startedAt,
+		Interval:                  s.opts.Interval.String(),
+		EpicName:                  s.opts.EpicName,
+		EffortLevel:               s.opts.EffortLevel,
+		MaxInterventionsPerClass:  config.CopilotMaxInterventionsPerClass,
+		StopOnBuildComplete:       true,
+		Mode:                      ModeActive,
+		EngineCapabilities:        EngineCapabilities{SessionIDFlag: probe.SessionIDFlag, CronCreate: true},
+		SessionIDCaptureMechanism: capMech,
+	}
+	if err := WriteManifest(s.opts.ProjectDir, manifest); err != nil {
+		_ = AppendEventsText(s.opts.ProjectDir, fmt.Sprintf(
+			"%s  copilot restart failed: write manifest: %v",
+			time.Now().UTC().Format(time.RFC3339), err))
+		return false
+	}
+	_ = WriteSessionIDFile(s.opts.ProjectDir, newSessionID)
+
+	bootstrapData := BootstrapData{
+		BuildDir:        s.opts.ProjectDir,
+		FrySourceDir:    s.opts.FrySourceDir,
+		Engine:          s.opts.Engine,
+		EpicName:        s.opts.EpicName,
+		EffortLevel:     s.opts.EffortLevel,
+		TotalSprints:    s.opts.TotalSprints,
+		StartedAt:       startedAt,
+		Interval:        s.opts.Interval.String(),
+		IntervalMinutes: int(s.opts.Interval.Minutes()),
+		SessionID:       newSessionID,
+		RunID:           s.opts.RunID,
+	}
+	if _, err := WriteBootstrapPromptFile(s.opts.ProjectDir, bootstrapData); err != nil {
+		_ = AppendEventsText(s.opts.ProjectDir, fmt.Sprintf(
+			"%s  copilot restart failed: write bootstrap prompt: %v",
+			time.Now().UTC().Format(time.RFC3339), err))
+		return false
+	}
+
+	_ = ForceWriteStateSnapshot(s.opts.ProjectDir)
+
+	// Spawn bootstrap subprocess with the new session.
+	spawnOpts := BootstrapOpts{
+		ProjectDir:   s.opts.ProjectDir,
+		FrySourceDir: s.opts.FrySourceDir,
+		Engine:       s.opts.Engine,
+		Model:        s.opts.Model,
+		EpicName:     s.opts.EpicName,
+		EffortLevel:  s.opts.EffortLevel,
+		TotalSprints: s.opts.TotalSprints,
+		BuildPID:     s.opts.BuildPID,
+		Interval:     s.opts.Interval.String(),
+		RunID:        s.opts.RunID,
+	}
+	_, _, spawnErr := spawnBootstrapSubprocess(spawnOpts, newSessionID)
+	if spawnErr != nil {
+		_ = AppendEventsText(s.opts.ProjectDir, fmt.Sprintf(
+			"%s  copilot restart failed: spawn bootstrap: %v",
+			time.Now().UTC().Format(time.RFC3339), spawnErr))
+		return false
+	}
+
+	oldSession := s.opts.SessionID
+	s.opts.SessionID = newSessionID
+	s.wakeCounter = 0
+
+	_ = EmitEvent(s.opts.ProjectDir, Event{
+		Type: observer.EventCopilotBootstrap,
+		Data: map[string]string{
+			"session_id":     newSessionID,
+			"old_session_id": oldSession,
+			"engine":         s.opts.Engine,
+			"mode":           string(ModeActive),
+			"interval":       s.opts.Interval.String(),
+			"trigger":        "restart_requested",
+		},
+	})
+	_ = AppendEventsText(s.opts.ProjectDir, fmt.Sprintf(
+		"%s  Copilot restarted (new session %s, old session %s).",
+		startedAt, newSessionID, oldSession))
+
+	return true
+}
+
 // tick executes one wake: spawns a fresh engine subprocess that resumes
 // the copilot session, sends the wake message, waits for the subprocess
 // to exit, and writes a per-tick result log to .fry/copilot/wakes/.
@@ -139,6 +264,9 @@ func (s *TickScheduler) run() {
 // subprocess hit an error. Per-tick errors are recorded in the wake's
 // result.log and as observer events; the scheduler keeps running.
 func (s *TickScheduler) tick() {
+	if s.checkRestart() {
+		return
+	}
 	s.wakeCounter++
 	startedAt := time.Now().UTC()
 	wakeID := startedAt.Format("20060102-150405")

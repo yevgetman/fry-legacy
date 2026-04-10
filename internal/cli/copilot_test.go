@@ -356,6 +356,27 @@ func TestCopilotStopWithoutManifest(t *testing.T) {
 	assert.Contains(t, out, "nothing to stop")
 }
 
+func TestCopilotRestartWritesSignalFile(t *testing.T) {
+	dir := t.TempDir()
+	plantCopilotManifest(t, dir, "test-session-uuid")
+
+	out, err := runRootCmd(t, "copilot", "restart", "--project-dir", dir)
+	require.NoError(t, err)
+	assert.Contains(t, out, "restart requested")
+
+	flagPath := filepath.Join(dir, config.CopilotRestartRequestedFile)
+	_, statErr := os.Stat(flagPath)
+	assert.NoError(t, statErr, "restart signal file should exist")
+}
+
+func TestCopilotRestartWithoutManifest(t *testing.T) {
+	dir := t.TempDir()
+
+	out, err := runRootCmd(t, "copilot", "restart", "--project-dir", dir)
+	require.NoError(t, err)
+	assert.Contains(t, out, "nothing to restart")
+}
+
 func TestCopilotTailMissingLog(t *testing.T) {
 	dir := t.TempDir()
 
