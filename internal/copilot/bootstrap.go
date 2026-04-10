@@ -108,6 +108,8 @@ func Bootstrap(opts BootstrapOpts) (*BootstrapResult, error) {
 		Interval:                  opts.Interval,
 		EpicName:                  opts.EpicName,
 		EffortLevel:               opts.EffortLevel,
+		TotalSprints:              opts.TotalSprints,
+		RunID:                     opts.RunID,
 		MaxInterventionsPerClass:  config.CopilotMaxInterventionsPerClass,
 		StopOnBuildComplete:       true,
 		Mode:                      mode,
@@ -309,6 +311,14 @@ func spawnBootstrapSubprocess(opts BootstrapOpts, sessionID string) (*exec.Cmd, 
 	}()
 
 	return cmd, logPath, nil
+}
+
+// SpawnBootstrapSubprocess is the exported entry point for spawning a
+// bootstrap subprocess. Used by `fry copilot restart` to immediately
+// start a new session without waiting for the next scheduler tick.
+func SpawnBootstrapSubprocess(opts BootstrapOpts, sessionID string) error {
+	_, _, err := spawnBootstrapSubprocess(opts, sessionID)
+	return err
 }
 
 // buildEngineArgs constructs the argv for the bootstrap subprocess based

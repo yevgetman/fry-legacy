@@ -138,13 +138,33 @@ func (s *TickScheduler) run() {
 	}
 }
 
-// checkRestart checks for a restart-requested signal file. If present,
-// it generates a new session ID, renders a fresh bootstrap prompt (using
-// the current binary's embedded templates), spawns a new bootstrap
-// subprocess, and updates the manifest. Returns true if a restart was
-// performed — the caller should skip the normal tick in that case
-// because the bootstrap subprocess handles the first interaction.
+// checkRestart checks two restart triggers:
+//
+//  1. The manifest's session ID differs from the scheduler's — this means
+//     the CLI restart command already performed an immediate re-bootstrap
+//     and the scheduler just needs to adopt the new session ID.
+//
+//  2. A restart-requested signal file exists — the scheduler performs the
+//     full re-bootstrap itself (legacy/fallback path).
+//
+// Returns true if a restart was detected and the normal tick should be
+// skipped (either because the CLI already bootstrapped, or because the
+// scheduler just did).
 func (s *TickScheduler) checkRestart() bool {
+	// Path 1: CLI already re-bootstrapped — adopt the new session.
+	if m, err := ReadManifest(s.opts.ProjectDir); err == nil && m != nil && m.SessionID != "" && m.SessionID != s.opts.SessionID {
+		old := s.opts.SessionID
+		s.opts.SessionID = m.SessionID
+		s.wakeCounter = 0
+		_ = AppendEventsText(s.opts.ProjectDir, fmt.Sprintf(
+			"%s  Scheduler adopted new session %s (was %s).",
+			time.Now().UTC().Format(time.RFC3339), m.SessionID, old))
+		// The CLI already spawned the bootstrap subprocess, so skip this
+		// tick — let the new session's bootstrap complete undisturbed.
+		return true
+	}
+
+	// Path 2: signal file — scheduler does the full re-bootstrap.
 	signalPath := filepath.Join(s.opts.ProjectDir, config.CopilotRestartRequestedFile)
 	if _, err := os.Stat(signalPath); err != nil {
 		return false
@@ -176,6 +196,8 @@ func (s *TickScheduler) checkRestart() bool {
 		Interval:                  s.opts.Interval.String(),
 		EpicName:                  s.opts.EpicName,
 		EffortLevel:               s.opts.EffortLevel,
+		TotalSprints:              s.opts.TotalSprints,
+		RunID:                     s.opts.RunID,
 		MaxInterventionsPerClass:  config.CopilotMaxInterventionsPerClass,
 		StopOnBuildComplete:       true,
 		Mode:                      ModeActive,

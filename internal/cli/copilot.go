@@ -268,17 +268,102 @@ var copilotRestartCmd = &cobra.Command{
 			return nil
 		}
 
-		flagPath := filepath.Join(dir, config.CopilotRestartRequestedFile)
-		if err := os.MkdirAll(filepath.Dir(flagPath), 0o755); err != nil {
-			return fmt.Errorf("create copilot dir: %w", err)
+		oldSession := manifest.SessionID
+
+		// Immediate re-bootstrap: generate new session, write manifest,
+		// render prompt, spawn subprocess. The in-process scheduler will
+		// adopt the new session ID on its next tick by reading the updated
+		// manifest.
+		probe := copilot.EngineProbeResult{Engine: manifest.Engine}
+		if manifest.Engine == "claude" {
+			probe = copilot.ProbeClaudeCapabilities()
 		}
-		body := []byte(time.Now().UTC().Format(time.RFC3339) + "\n")
-		if err := os.WriteFile(flagPath, body, 0o644); err != nil {
-			return fmt.Errorf("write restart flag: %w", err)
+		newSessionID, capMech, captureErr := copilot.CaptureSessionID(probe)
+		if captureErr != nil || newSessionID == "" {
+			return fmt.Errorf("capture new session ID: %w", captureErr)
 		}
 
-		fmt.Fprintln(cmd.OutOrStdout(), "Copilot restart requested. Next tick will bootstrap a fresh session.")
-		fmt.Fprintf(cmd.OutOrStdout(), "Current session %s will be replaced.\n", manifest.SessionID)
+		startedAt := time.Now().UTC().Format(time.RFC3339)
+		newManifest := &copilot.Manifest{
+			SessionID:                 newSessionID,
+			BuildPID:                  manifest.BuildPID,
+			BuildDir:                  manifest.BuildDir,
+			FrySourceDir:              manifest.FrySourceDir,
+			Engine:                    manifest.Engine,
+			Model:                     manifest.Model,
+			StartedAt:                 startedAt,
+			Interval:                  manifest.Interval,
+			EpicName:                  manifest.EpicName,
+			EffortLevel:               manifest.EffortLevel,
+			TotalSprints:              manifest.TotalSprints,
+			RunID:                     manifest.RunID,
+			MaxInterventionsPerClass:  manifest.MaxInterventionsPerClass,
+			StopOnBuildComplete:       true,
+			Mode:                      copilot.ModeActive,
+			EngineCapabilities:        copilot.EngineCapabilities{SessionIDFlag: probe.SessionIDFlag, CronCreate: true},
+			SessionIDCaptureMechanism: capMech,
+		}
+		if err := copilot.WriteManifest(dir, newManifest); err != nil {
+			return fmt.Errorf("write manifest: %w", err)
+		}
+		_ = copilot.WriteSessionIDFile(dir, newSessionID)
+
+		intervalMin := 10
+		if d, pErr := time.ParseDuration(manifest.Interval); pErr == nil && d.Minutes() >= 1 {
+			intervalMin = int(d.Minutes())
+		}
+		bootstrapData := copilot.BootstrapData{
+			BuildDir:        manifest.BuildDir,
+			FrySourceDir:    manifest.FrySourceDir,
+			Engine:          manifest.Engine,
+			EpicName:        manifest.EpicName,
+			EffortLevel:     manifest.EffortLevel,
+			TotalSprints:    manifest.TotalSprints,
+			StartedAt:       startedAt,
+			Interval:        manifest.Interval,
+			IntervalMinutes: intervalMin,
+			SessionID:       newSessionID,
+			RunID:           manifest.RunID,
+		}
+		if _, promptErr := copilot.WriteBootstrapPromptFile(dir, bootstrapData); promptErr != nil {
+			return fmt.Errorf("write bootstrap prompt: %w", promptErr)
+		}
+
+		_ = copilot.ForceWriteStateSnapshot(dir)
+
+		// Spawn the bootstrap subprocess with the new session.
+		spawnOpts := copilot.BootstrapOpts{
+			ProjectDir:   dir,
+			FrySourceDir: manifest.FrySourceDir,
+			Engine:       manifest.Engine,
+			Model:        manifest.Model,
+			EpicName:     manifest.EpicName,
+			EffortLevel:  manifest.EffortLevel,
+			TotalSprints: manifest.TotalSprints,
+			BuildPID:     manifest.BuildPID,
+			Interval:     manifest.Interval,
+			RunID:        manifest.RunID,
+		}
+		if spawnErr := copilot.SpawnBootstrapSubprocess(spawnOpts, newSessionID); spawnErr != nil {
+			return fmt.Errorf("spawn bootstrap subprocess: %w", spawnErr)
+		}
+
+		_ = copilot.EmitEvent(dir, copilot.Event{
+			Type: "copilot_restart",
+			Data: map[string]string{
+				"old_session_id": oldSession,
+				"new_session_id": newSessionID,
+				"trigger":        "cli_restart",
+			},
+		})
+		_ = copilot.AppendEventsText(dir, fmt.Sprintf(
+			"%s  Copilot restarted via CLI (new session %s, old session %s).",
+			startedAt, newSessionID, oldSession))
+
+		fmt.Fprintf(cmd.OutOrStdout(), "Copilot restarted with fresh session.\n")
+		fmt.Fprintf(cmd.OutOrStdout(), "  Old session: %s\n", oldSession)
+		fmt.Fprintf(cmd.OutOrStdout(), "  New session: %s\n", newSessionID)
+		fmt.Fprintln(cmd.OutOrStdout(), "  Scheduler will adopt new session on next tick.")
 		return nil
 	},
 }

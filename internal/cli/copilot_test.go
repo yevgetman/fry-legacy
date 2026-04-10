@@ -356,17 +356,35 @@ func TestCopilotStopWithoutManifest(t *testing.T) {
 	assert.Contains(t, out, "nothing to stop")
 }
 
-func TestCopilotRestartWritesSignalFile(t *testing.T) {
+func TestCopilotRestartImmediateRebootstrap(t *testing.T) {
 	dir := t.TempDir()
 	plantCopilotManifest(t, dir, "test-session-uuid")
 
 	out, err := runRootCmd(t, "copilot", "restart", "--project-dir", dir)
 	require.NoError(t, err)
-	assert.Contains(t, out, "restart requested")
+	assert.Contains(t, out, "Copilot restarted")
+	assert.Contains(t, out, "Old session: test-session-uuid")
+	assert.Contains(t, out, "New session:")
 
-	flagPath := filepath.Join(dir, config.CopilotRestartRequestedFile)
-	_, statErr := os.Stat(flagPath)
-	assert.NoError(t, statErr, "restart signal file should exist")
+	// Manifest should have a different session ID now.
+	m, mErr := copilot.ReadManifest(dir)
+	require.NoError(t, mErr)
+	require.NotNil(t, m)
+	assert.NotEqual(t, "test-session-uuid", m.SessionID,
+		"manifest must have a new session ID after restart")
+
+	// Bootstrap prompt should exist with fresh content.
+	promptPath := filepath.Join(dir, config.CopilotBootstrapPromptFile)
+	data, pErr := os.ReadFile(promptPath)
+	require.NoError(t, pErr)
+	assert.Contains(t, string(data), "What is Fry?",
+		"bootstrap prompt must contain the fry executive summary")
+
+	// Events should record the restart.
+	eventsPath := filepath.Join(dir, config.CopilotEventsTextFile)
+	evData, eErr := os.ReadFile(eventsPath)
+	require.NoError(t, eErr)
+	assert.Contains(t, string(evData), "restarted via CLI")
 }
 
 func TestCopilotRestartWithoutManifest(t *testing.T) {

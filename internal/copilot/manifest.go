@@ -86,6 +86,8 @@ type Manifest struct {
 	Interval                  string                    `json:"interval"`
 	EpicName                  string                    `json:"epic_name"`
 	EffortLevel               string                    `json:"effort_level"`
+	TotalSprints              int                       `json:"total_sprints"`
+	RunID                     string                    `json:"run_id"`
 	MaxInterventionsPerClass  int                       `json:"max_interventions_per_class"`
 	StopOnBuildComplete       bool                      `json:"stop_on_build_complete"`
 	Mode                      Mode                      `json:"mode"`
