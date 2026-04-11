@@ -415,7 +415,7 @@ func TestCopilotRestartWithoutManifest(t *testing.T) {
 func TestCopilotTailMissingLog(t *testing.T) {
 	dir := t.TempDir()
 
-	_, err := runRootCmd(t, "copilot", "tail", "--project-dir", dir)
+	_, err := runRootCmd(t, "copilot", "tail", "--follow=false", "--project-dir", dir)
 	require.Error(t, err)
 }
 
@@ -424,7 +424,7 @@ func TestCopilotTailReadsEventsTxt(t *testing.T) {
 	require.NoError(t, copilot.AppendEventsText(dir, "first event"))
 	require.NoError(t, copilot.AppendEventsText(dir, "second event"))
 
-	out, err := runRootCmd(t, "copilot", "tail", "--project-dir", dir)
+	out, err := runRootCmd(t, "copilot", "tail", "--follow=false", "--project-dir", dir)
 	require.NoError(t, err)
 	assert.Contains(t, out, "first event")
 	assert.Contains(t, out, "second event")

@@ -887,7 +887,7 @@ func init() {
 	copilotStopCmd.Flags().Bool("keep-cron", false, "Skip cron deletion (leave the cron in place)")
 
 	// tail
-	copilotTailCmd.Flags().Bool("follow", false, "Follow the log (tail -f style)")
+	copilotTailCmd.Flags().Bool("follow", true, "Follow the log (tail -f style); use --follow=false to dump and exit")
 	copilotTailCmd.Flags().Bool("jsonl", false, "Tail events.jsonl instead of events.txt")
 
 	// summary
