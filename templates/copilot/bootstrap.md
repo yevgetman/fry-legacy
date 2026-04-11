@@ -29,7 +29,7 @@ You are running for the first time. Do exactly this:
    crashes or exits. Use the CronCreate tool with:
 
      schedule: "*/{{.IntervalMinutes}} * * * *"
-     prompt:   "You are the fry copilot (session {{.SessionID}}). Your cron is ALREADY installed — do NOT call CronCreate again. Read .fry/copilot/prompts/bootstrap.md for your full instructions and Tick Checklist. Then read .fry/copilot/manifest.json and .fry/copilot/state-snapshot.json for current build state. Run the Tick Checklist now (skip the One-Time Bootstrap section — that was already done)."
+     prompt:   "You are the fry copilot (session {{.SessionID}}). Read .fry/copilot/prompts/bootstrap.md for your full instructions and Tick Checklist. Then read .fry/copilot/manifest.json and .fry/copilot/state-snapshot.json for current build state. Run the Tick Checklist now (skip the One-Time Bootstrap section — that was already done)."
 
    After CronCreate succeeds, write the returned cron ID to
    .fry/copilot/cron.id (one line, no trailing newline). This file
@@ -70,10 +70,21 @@ timestamp from `date -u`. Never substitute the frozen bootstrap timestamp.
 
 # Tick Checklist (run on every wake)
 
-IMPORTANT: If you were woken by your cron schedule, your cron is ALREADY
-installed. Do NOT call CronCreate again — doing so creates duplicate crons.
-If .fry/copilot/cron.id exists, you have an active cron. Skip the
-"One-Time Bootstrap" section above and start here.
+CRON HEALTH CHECK: CronCreate jobs are in-memory and do not survive session
+interruptions or restarts. Before proceeding, call CronList to check whether
+your cron (ID stored in .fry/copilot/cron.id) is still active.
+
+- If your cron ID appears in the CronList output: your cron is healthy.
+  Do NOT call CronCreate again — doing so creates duplicates.
+- If CronList returns no jobs or your cron ID is missing: the cron was
+  lost (e.g., session was interrupted and resumed). Reinstall it:
+  1. Call CronCreate with the same schedule and prompt as the original
+     (see the One-Time Bootstrap section for the exact values).
+  2. Write the NEW cron ID to .fry/copilot/cron.id (overwriting the stale one).
+  3. Append to events.txt:
+       <UTC NOW>  Cron reinstalled (id=<new-id>, every {{.IntervalMinutes}}m). Previous cron <old-id> lost.
+
+Skip the "One-Time Bootstrap" section above and start at step 0.
 
 If your context has been compacted and you cannot recall the full tick
 procedure, re-read this file from disk:
