@@ -82,6 +82,12 @@ type Manifest struct {
 	FrySourceDir              string                    `json:"fry_source_dir"`
 	Engine                    string                    `json:"engine"`
 	Model                     string                    `json:"model"`
+	// BootstrapCWD is the working directory the bootstrap subprocess was
+	// spawned from. Claude Code stores sessions under a project-hash
+	// derived from CWD, so `claude --resume` must run from the same
+	// directory. This field is set once at bootstrap and NEVER changed —
+	// even when PromoteCopilot moves the copilot artifacts to a worktree.
+	BootstrapCWD              string                    `json:"bootstrap_cwd,omitempty"`
 	StartedAt                 string                    `json:"started_at"`
 	Interval                  string                    `json:"interval"`
 	EpicName                  string                    `json:"epic_name"`

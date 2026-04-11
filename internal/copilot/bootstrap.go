@@ -98,6 +98,7 @@ func Bootstrap(opts BootstrapOpts) (*BootstrapResult, error) {
 		SessionID:                 sessionID,
 		BuildPID:                  opts.BuildPID,
 		BuildDir:                  opts.ProjectDir,
+		BootstrapCWD:              opts.ProjectDir,
 		FrySourceDir:              opts.FrySourceDir,
 		Engine:                    opts.Engine,
 		Model:                     opts.Model,
@@ -416,28 +417,26 @@ func PromoteCopilot(opts PromoteOpts) error {
 	manifest.EffortLevel = opts.EffortLevel
 	manifest.TotalSprints = opts.TotalSprints
 
-	// If the project dir changed (worktree), relocate the copilot
-	// directory and update the manifest's BuildDir.
+	// If the project dir changed (worktree), copy the copilot directory
+	// to the worktree (so fry main can find it there) and update the
+	// manifest's BuildDir. The original copilot dir is KEPT at
+	// BootstrapCWD because:
+	//   - The Claude Code session was created from BootstrapCWD
+	//   - CronCreate wakes run from the session's CWD (= BootstrapCWD)
+	//   - `fry copilot attach` chdir's to BootstrapCWD for --resume
+	// Moving the original would break cron wakes and attach.
 	if opts.ProjectDir != sourceDir {
 		manifest.BuildDir = opts.ProjectDir
 
 		oldCopilotDir := filepath.Join(sourceDir, config.CopilotDir)
 		newCopilotDir := filepath.Join(opts.ProjectDir, config.CopilotDir)
-		if err := os.MkdirAll(filepath.Dir(newCopilotDir), 0o755); err != nil {
+		if err := os.MkdirAll(newCopilotDir, 0o755); err != nil {
 			return fmt.Errorf("promote copilot: create target dir: %w", err)
 		}
-		if err := os.Rename(oldCopilotDir, newCopilotDir); err != nil {
-			// Rename fails on cross-device links. Copy the directory
-			// contents so events.txt, wakes/, and other state survive.
-			_ = os.MkdirAll(newCopilotDir, 0o755)
-			_ = copyDirContents(oldCopilotDir, newCopilotDir)
-		}
+		_ = copyDirContents(oldCopilotDir, newCopilotDir)
 	}
 
 	targetDir := opts.ProjectDir
-	if err := WriteManifest(targetDir, manifest); err != nil {
-		return fmt.Errorf("promote copilot: write manifest: %w", err)
-	}
 
 	// Rewrite the bootstrap prompt with real values so the copilot can
 	// re-read it if its context was compacted.
@@ -454,8 +453,26 @@ func PromoteCopilot(opts PromoteOpts) error {
 		SessionID:       manifest.SessionID,
 		RunID:           manifest.RunID,
 	}
+
+	// Write manifest and prompt to the target (worktree) dir so fry main
+	// and `fry copilot status` can find them there.
+	if err := WriteManifest(targetDir, manifest); err != nil {
+		return fmt.Errorf("promote copilot: write manifest: %w", err)
+	}
 	if _, err := WriteBootstrapPromptFile(targetDir, bootstrapData); err != nil {
 		return fmt.Errorf("promote copilot: write prompt: %w", err)
+	}
+
+	// Also update the ORIGINAL dir (BootstrapCWD) so cron wakes — which
+	// run from the session's CWD — see the promoted manifest and prompt.
+	// Without this, cron wakes would read stale epic/effort/sprint values.
+	if opts.ProjectDir != sourceDir {
+		if err := WriteManifest(sourceDir, manifest); err != nil {
+			return fmt.Errorf("promote copilot: write manifest to bootstrap dir: %w", err)
+		}
+		if _, err := WriteBootstrapPromptFile(sourceDir, bootstrapData); err != nil {
+			return fmt.Errorf("promote copilot: write prompt to bootstrap dir: %w", err)
+		}
 	}
 
 	_ = AppendEventsText(targetDir, fmt.Sprintf(

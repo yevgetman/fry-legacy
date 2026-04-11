@@ -245,3 +245,57 @@ func TestWriteAndReadBootstrapPID(t *testing.T) {
 	require.NoError(t, writeBootstrapPID(dir, 12345))
 	assert.Equal(t, 12345, ReadBootstrapPID(dir))
 }
+
+func TestBootstrapCWDSetAtBootstrap(t *testing.T) {
+	t.Parallel()
+	opts := defaultBootstrapOpts(t)
+	_, err := Bootstrap(opts)
+	require.NoError(t, err)
+
+	manifest, err := ReadManifest(opts.ProjectDir)
+	require.NoError(t, err)
+	assert.Equal(t, opts.ProjectDir, manifest.BootstrapCWD,
+		"BootstrapCWD should be set to ProjectDir at bootstrap time")
+}
+
+func TestPromoteCopilotPreservesBootstrapCWD(t *testing.T) {
+	t.Parallel()
+	opts := defaultBootstrapOpts(t)
+	_, err := Bootstrap(opts)
+	require.NoError(t, err)
+
+	originalDir := opts.ProjectDir
+
+	// Promote to a new directory (simulating worktree redirect).
+	worktreeDir := t.TempDir()
+	require.NoError(t, PromoteCopilot(PromoteOpts{
+		ProjectDir:   worktreeDir,
+		OldDir:       originalDir,
+		EpicName:     "Promoted Epic",
+		EffortLevel:  "max",
+		TotalSprints: 5,
+	}))
+
+	// BootstrapCWD must still point to the original dir, NOT the worktree.
+	manifest, err := ReadManifest(worktreeDir)
+	require.NoError(t, err)
+	assert.Equal(t, originalDir, manifest.BootstrapCWD,
+		"BootstrapCWD must survive PromoteCopilot unchanged")
+	assert.Equal(t, worktreeDir, manifest.BuildDir,
+		"BuildDir should be updated to the worktree")
+
+	// Original copilot dir should still exist (not moved, copied).
+	_, err = os.Stat(filepath.Join(originalDir, config.CopilotDir))
+	assert.NoError(t, err,
+		"original copilot dir must be preserved at BootstrapCWD for cron/session access")
+
+	// The original dir's manifest should also be updated with promoted values.
+	origManifest, err := ReadManifest(originalDir)
+	require.NoError(t, err)
+	assert.Equal(t, "Promoted Epic", origManifest.EpicName,
+		"original dir manifest must be updated with promoted epic")
+	assert.Equal(t, 5, origManifest.TotalSprints,
+		"original dir manifest must be updated with promoted sprint count")
+	assert.Equal(t, originalDir, origManifest.BootstrapCWD,
+		"BootstrapCWD must be preserved in original dir manifest")
+}

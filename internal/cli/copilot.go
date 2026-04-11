@@ -133,7 +133,16 @@ var copilotStatusCmd = &cobra.Command{
 		fmt.Fprintf(out, "  Busy right now:      %s\n", boolYesNo(busy))
 		fmt.Fprintln(out, "  Attach command:      fry copilot attach")
 		if manifest.SessionID != "" {
-			fmt.Fprintf(out, "                       %s --resume %s\n", manifest.Engine, manifest.SessionID)
+			sessionDir := manifest.BootstrapCWD
+			if sessionDir == "" {
+				sessionDir = dir
+			}
+			cwd, _ := os.Getwd()
+			if cwd != sessionDir {
+				fmt.Fprintf(out, "                       cd %s && %s --resume %s\n", sessionDir, manifest.Engine, manifest.SessionID)
+			} else {
+				fmt.Fprintf(out, "                       %s --resume %s\n", manifest.Engine, manifest.SessionID)
+			}
 		}
 
 		// Exit non-zero on stale state for scripting: the copilot once
@@ -187,13 +196,20 @@ var copilotAttachCmd = &cobra.Command{
 		if lookErr != nil {
 			return fmt.Errorf("locate %s: %w", attachCmd[0], lookErr)
 		}
-		// Chdir to the resolved project directory so the engine CLI
-		// finds the session under the correct project path. Without
-		// this, worktree builds break: the session was created from
-		// the worktree CWD but the user runs attach from the main
-		// checkout, so the engine looks in the wrong project.
-		if err := os.Chdir(dir); err != nil {
-			return fmt.Errorf("chdir to %s: %w", dir, err)
+		// Chdir to the directory where the bootstrap subprocess was
+		// originally spawned. Claude Code stores sessions under a
+		// project-hash derived from CWD, so --resume must run from the
+		// same directory the session was created in. BootstrapCWD is
+		// set once at bootstrap and never changed — even when
+		// PromoteCopilot moves artifacts to a worktree. Fall back to
+		// the resolved copilot dir for manifests written before
+		// BootstrapCWD existed.
+		sessionDir := manifest.BootstrapCWD
+		if sessionDir == "" {
+			sessionDir = dir
+		}
+		if err := os.Chdir(sessionDir); err != nil {
+			return fmt.Errorf("chdir to %s: %w", sessionDir, err)
 		}
 		// Replace the current process with the engine CLI.
 		return syscall.Exec(execBin, attachCmd, os.Environ())
@@ -376,6 +392,7 @@ var copilotRestartCmd = &cobra.Command{
 			SessionID:                 newSessionID,
 			BuildPID:                  manifest.BuildPID,
 			BuildDir:                  manifest.BuildDir,
+			BootstrapCWD:              dir,
 			FrySourceDir:              manifest.FrySourceDir,
 			Engine:                    manifest.Engine,
 			Model:                     manifest.Model,

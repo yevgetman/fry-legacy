@@ -29,7 +29,7 @@ You are running for the first time. Do exactly this:
    crashes or exits. Use the CronCreate tool with:
 
      schedule: "*/{{.IntervalMinutes}} * * * *"
-     prompt:   "Wake up and run your tick procedure. Re-read .fry/copilot/manifest.json and .fry/copilot/state-snapshot.json for current config and build state, then follow the Tick Checklist in your bootstrap prompt. Build dir: {{.BuildDir}}."
+     prompt:   "You are the fry copilot (session {{.SessionID}}). Your cron is ALREADY installed — do NOT call CronCreate again. Read .fry/copilot/prompts/bootstrap.md for your full instructions and Tick Checklist. Then read .fry/copilot/manifest.json and .fry/copilot/state-snapshot.json for current build state. Run the Tick Checklist now (skip the One-Time Bootstrap section — that was already done)."
 
    After CronCreate succeeds, write the returned cron ID to
    .fry/copilot/cron.id (one line, no trailing newline). This file
@@ -69,6 +69,15 @@ Wherever you see the placeholder `<UTC NOW>` below, substitute a fresh
 timestamp from `date -u`. Never substitute the frozen bootstrap timestamp.
 
 # Tick Checklist (run on every wake)
+
+IMPORTANT: If you were woken by your cron schedule, your cron is ALREADY
+installed. Do NOT call CronCreate again — doing so creates duplicate crons.
+If .fry/copilot/cron.id exists, you have an active cron. Skip the
+"One-Time Bootstrap" section above and start here.
+
+If your context has been compacted and you cannot recall the full tick
+procedure, re-read this file from disk:
+  .fry/copilot/prompts/bootstrap.md
 
 Walk through these in order. Stop reasoning and intervene the moment you
 find an answer that demands action.
