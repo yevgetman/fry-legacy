@@ -993,7 +993,6 @@ var runCmd = &cobra.Command{
 					Data:   map[string]string{"name": spr.Name},
 				})
 			}
-			_ = copilot.WriteStateSnapshot(projectPath)
 
 			// Update build status for agent polling
 			buildStatus.Build.CurrentSprint = spr.Number
@@ -1005,6 +1004,7 @@ var runCmd = &cobra.Command{
 				StartedAt: &sprintStartedAt,
 			})
 			writeCurrentBuildStatus()
+			_ = copilot.WriteStateSnapshot(projectPath)
 
 			if ep.DockerFromSprint > 0 && sprintNum >= ep.DockerFromSprint {
 				if err := docker.EnsureDockerUp(ctx, projectPath, ep.DockerReadyCmd, ep.DockerReadyTimeout); err != nil {
@@ -1163,7 +1163,6 @@ var runCmd = &cobra.Command{
 					})
 				}
 			}
-			_ = copilot.WriteStateSnapshot(projectPath)
 
 			// Collect per-sprint data for the build report and token summary.
 			sprintEnd := time.Now()
@@ -1226,6 +1225,7 @@ var runCmd = &cobra.Command{
 			updateBuildStatusSprint(buildStatus, spr.Number, result)
 			writeCurrentBuildStatus()
 			writeRollingResults(projectPath, buildStatus)
+			_ = copilot.WriteStateSnapshot(projectPath)
 
 			if isPassStatus(result.Status) {
 				if steering.HasStopRequest(projectPath) {
@@ -1389,7 +1389,6 @@ var runCmd = &cobra.Command{
 							Data:   auditData,
 						})
 					}
-					_ = copilot.WriteStateSnapshot(projectPath)
 
 					// Update build status with audit result
 					updateBuildStatusAudit(buildStatus, spr.Number, auditResult)
@@ -1400,6 +1399,7 @@ var runCmd = &cobra.Command{
 					if originalProjectPath != projectPath {
 						writeBuildPhase(originalProjectPath, "sprint:worktree")
 					}
+					_ = copilot.WriteStateSnapshot(projectPath)
 				}
 
 				if steering.HasStopRequest(projectPath) {
@@ -2486,6 +2486,7 @@ var runCmd = &cobra.Command{
 				writeBuildPhase(originalProjectPath, "complete")
 			}
 		}
+		_ = copilot.ForceWriteStateSnapshot(projectPath)
 
 		// Wait for upload to complete (bounded by upload timeout)
 		if uploadDone != nil {
