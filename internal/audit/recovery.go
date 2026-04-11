@@ -14,11 +14,12 @@ import (
 )
 
 var (
-	reviewFindingHeaderRe = regexp.MustCompile(`(?im)^\d+\.\s+(CRITICAL|HIGH|MEDIUM|MODERATE|LOW):\s+`)
-	markdownLinkRe        = regexp.MustCompile(`\[([^\]]+)\]\([^)]+\)`)
-	markdownLinkTargetRe  = regexp.MustCompile(`\[[^\]]+\]\((/[^)]+)\)`)
-	explicitPassRe        = regexp.MustCompile(`(?is)\bverdict\b.{0,40}\bpass\b|\bno findings\b|\bno issues (?:were )?found\b|\bno issues remain\b`)
-	allResolvedRe         = regexp.MustCompile(`(?is)\ball\b.{0,80}\bissues?\b.{0,80}\bresolved\b`)
+	reviewFindingHeaderRe     = regexp.MustCompile(`(?im)^\d+\.\s+(CRITICAL|HIGH|MEDIUM|MODERATE|LOW):\s+`)
+	bracketedSeverityHeaderRe = regexp.MustCompile(`(?im)^(?:#{1,6}\s+)?\*{0,2}\[(CRITICAL|HIGH|MEDIUM|MODERATE|LOW)\]\*{0,2}\s+(.+?)(?:\s*\*{0,2})$`)
+	markdownLinkRe            = regexp.MustCompile(`\[([^\]]+)\]\([^)]+\)`)
+	markdownLinkTargetRe      = regexp.MustCompile(`\[[^\]]+\]\((/[^)]+)\)`)
+	explicitPassRe            = regexp.MustCompile(`(?is)\bverdict\b.{0,40}\bpass\b|\bno findings\b|\bno issues (?:were )?found\b|\bno issues remain\b`)
+	allResolvedRe             = regexp.MustCompile(`(?is)\ball\b.{0,80}\bissues?\b.{0,80}\bresolved\b`)
 )
 
 func readAuditOutput(path, displayPath, session, logPrefix, errPrefix, projectDir, output, logPath string) ([]byte, error) {
@@ -96,6 +97,13 @@ func recoverAuditReport(displayPath, projectDir, output, logPath string) (conten
 			fmt.Sprintf("Recovered audit findings from agent output because the session did not write %s.", displayPath),
 			findings,
 		), "review-style assistant response"
+	}
+
+	if findings := parseBracketedSeverityFindings(section); len(findings) > 0 {
+		return synthesizeAuditReport(
+			fmt.Sprintf("Recovered audit findings from agent output because the session did not write %s.", displayPath),
+			findings,
+		), "bracketed-severity assistant response"
 	}
 
 	if explicitPassRe.MatchString(section) {
@@ -440,6 +448,65 @@ func buildResolvedVerificationReport(issueCount int) string {
 		fmt.Fprintf(&b, "- **Issue:** %d\n- **Status:** RESOLVED\n\n", i)
 	}
 	return b.String()
+}
+
+// parseBracketedSeverityFindings extracts findings from output that uses
+// bracketed severity in markdown headers, e.g.:
+//
+//	#### **[HIGH] description — `file.ts:123`**
+//	#### [MODERATE] description
+//
+// This format is commonly produced when agents write audit reports inline
+// in their response instead of to the expected output file.
+func parseBracketedSeverityFindings(content string) []Finding {
+	matches := bracketedSeverityHeaderRe.FindAllStringSubmatchIndex(content, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+
+	var findings []Finding
+	for _, match := range matches {
+		severityLabel := strings.ToUpper(content[match[2]:match[3]])
+		if severityLabel == "MEDIUM" {
+			severityLabel = "MODERATE"
+		}
+
+		raw := strings.TrimSpace(content[match[4]:match[5]])
+		// Strip backticks and trailing bold markers
+		raw = strings.TrimRight(raw, "*")
+		raw = strings.TrimSpace(raw)
+
+		description, location := splitBracketedDescription(raw)
+		description = sanitizeRecoveredField(stripMarkdownLinks(description))
+		if description == "" {
+			continue
+		}
+
+		findings = append(findings, Finding{
+			Location:    location,
+			Description: description,
+			Severity:    severityLabel,
+		})
+	}
+
+	return findings
+}
+
+// splitBracketedDescription splits "description — `location`" into its parts.
+// The separator is an em dash (—), en dash (–), or double hyphen (--).
+func splitBracketedDescription(raw string) (description, location string) {
+	for _, sep := range []string{" — ", " – ", " -- "} {
+		if idx := strings.LastIndex(raw, sep); idx >= 0 {
+			left := strings.TrimSpace(raw[:idx])
+			right := strings.TrimSpace(raw[idx+len(sep):])
+			// Only treat right side as location if it looks like a file reference
+			right = strings.Trim(right, "`")
+			if looksLikeFilePath(right) {
+				return left, right
+			}
+		}
+	}
+	return raw, ""
 }
 
 func ensureTrailingNewline(value string) string {

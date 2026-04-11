@@ -109,6 +109,7 @@ const cleanAudit = "## Summary\nAll good.\n\n## Findings\nNone.\n\n## Verdict\nP
 // PASS into a phantom CRITICAL.
 const passWithSeverityRubric = "## Summary\nAll checks resolved.\n\n## Findings\nNone.\n\n## Severity Reference\n- **Severity:** CRITICAL | HIGH | MODERATE | LOW\n\n## Verdict\nPASS\n"
 const reviewStyleHighFinding = "**Findings**\n\n1. High: Missing error handling in booking cancellation path.\n"
+const bracketedSeverityFindings = "### Issues Found\n\n---\n\n#### **[HIGH] `encodeURIComponent` regression breaks Teams meeting deletion — `teams.service.ts:392`**\n\nThe fix changed correct OData escaping to encodeURIComponent which breaks the filter.\n\n---\n\n#### **[MODERATE] E2E smoke tests don't verify unauthenticated access**\n\nMockAuthGuard always returns true so the @Public() bypass is never tested.\n\n---\n\n#### **[LOW] Worker idempotency type fragility**\n\nBullMQ RepeatableJob.every comparison uses string equality.\n"
 const diffStyleHighFinding = "codex\nI wrote the audit to `.fry/sprint-audit.txt`.\ndiff --git a/.fry/sprint-audit.txt b/.fry/sprint-audit.txt\nnew file mode 100644\nindex 0000000..1111111\n--- /dev/null\n+++ b/.fry/sprint-audit.txt\n@@ -0,0 +1,8 @@\n+## Summary\n+Recovered from diff.\n+\n+## Findings\n+- **Location:** src/api.go:20\n+- **Description:** Missing error handling\n+- **Severity:** HIGH\n+\n+## Verdict\n+FAIL\n"
 const resolvedVerifySummary = "All listed issues are marked `RESOLVED`."
 const diffStyleResolvedVerifyOutput = "codex\nVerified the listed issues and wrote the results.\ndiff --git a/.fry/sprint-audit.txt b/.fry/sprint-audit.txt\nnew file mode 100644\nindex 0000000..2222222\n--- /dev/null\n+++ b/.fry/sprint-audit.txt\n@@ -0,0 +1,5 @@\n+- **Issue:** 1\n+- **Status:** RESOLVED\n+\n+- **Issue:** 2\n+- **Status:** RESOLVED\n"
@@ -1815,6 +1816,110 @@ func TestRecoverVerificationOutputFromDiffTranscript(t *testing.T) {
 	assert.Contains(t, content, "- **Issue:** 1")
 	assert.Contains(t, content, "- **Status:** RESOLVED")
 	assert.Contains(t, content, "- **Issue:** 2")
+}
+
+func TestParseBracketedSeverityFindings(t *testing.T) {
+	t.Parallel()
+
+	findings := parseBracketedSeverityFindings(bracketedSeverityFindings)
+	require.Len(t, findings, 3)
+
+	assert.Equal(t, "HIGH", findings[0].Severity)
+	assert.Contains(t, findings[0].Description, "encodeURIComponent")
+	assert.Equal(t, "teams.service.ts:392", findings[0].Location)
+
+	assert.Equal(t, "MODERATE", findings[1].Severity)
+	assert.Contains(t, findings[1].Description, "E2E smoke tests")
+	assert.Empty(t, findings[1].Location)
+
+	assert.Equal(t, "LOW", findings[2].Severity)
+	assert.Contains(t, findings[2].Description, "Worker idempotency")
+	assert.Empty(t, findings[2].Location)
+}
+
+func TestParseBracketedSeverityFindingsVariants(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		input    string
+		severity string
+		desc     string
+		loc      string
+	}{
+		{
+			name:     "no bold no header",
+			input:    "[HIGH] Missing input validation — src/handler.go:45",
+			severity: "HIGH",
+			desc:     "Missing input validation",
+			loc:      "src/handler.go:45",
+		},
+		{
+			name:     "h3 bold brackets",
+			input:    "### **[MODERATE] Race condition in cache**",
+			severity: "MODERATE",
+			desc:     "Race condition in cache",
+			loc:      "",
+		},
+		{
+			name:     "medium normalized to moderate",
+			input:    "#### [MEDIUM] Unbounded query — db/users.ts:10",
+			severity: "MODERATE",
+			desc:     "Unbounded query",
+			loc:      "db/users.ts:10",
+		},
+		{
+			name:     "backtick-wrapped location",
+			input:    "#### **[LOW] Type assertion — `config.ts:99`**",
+			severity: "LOW",
+			desc:     "Type assertion",
+			loc:      "config.ts:99",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			findings := parseBracketedSeverityFindings(tt.input)
+			require.Len(t, findings, 1)
+			assert.Equal(t, tt.severity, findings[0].Severity)
+			assert.Contains(t, findings[0].Description, tt.desc)
+			assert.Equal(t, tt.loc, findings[0].Location)
+		})
+	}
+}
+
+func TestRecoverAuditReportFromBracketedSeverity(t *testing.T) {
+	t.Parallel()
+
+	content, source := recoverAuditReport(config.SprintAuditFile, "", bracketedSeverityFindings, "")
+	require.NotEmpty(t, content)
+	assert.Equal(t, "bracketed-severity assistant response", source)
+	assert.Contains(t, content, "encodeURIComponent")
+	assert.Contains(t, content, "HIGH")
+	assert.Contains(t, content, "FAIL")
+}
+
+func TestRunAuditLoopRecoversBracketedSeverityFindings(t *testing.T) {
+	t.Parallel()
+
+	eng := &stubEngine{
+		name: "codex",
+		outputs: []string{
+			bracketedSeverityFindings,
+			"Applied a targeted fix.\n",
+			resolvedVerifySummary,
+			cleanAuditSummary,
+		},
+	}
+	opts := makeOpts(t, eng)
+	opts.Epic.MaxAuditIterations = 1
+
+	result, err := RunAuditLoop(context.Background(), opts)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.Passed)
+	assert.Equal(t, 1, result.Iterations)
 }
 
 func TestRunAuditLoopPropagatesAgentErrors(t *testing.T) {
