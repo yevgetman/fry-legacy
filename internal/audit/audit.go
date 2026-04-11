@@ -1257,7 +1257,9 @@ func buildFixPrompt(opts AuditOpts, findings []Finding, resolved *resolvedLedger
 			}
 			data, err := readFileOrGitIndex(opts.ProjectDir, target)
 			if err != nil {
-				frylog.Log("WARNING: cannot inline target file %s: %v", target, err)
+				if !os.IsNotExist(err) {
+					frylog.Log("WARNING: cannot inline target file %s: %v", target, err)
+				}
 				continue
 			}
 			content := string(data)
