@@ -663,6 +663,10 @@ var copilotEmitEventCmd = &cobra.Command{
 			}
 		}
 
+		// Copilot events always write to the observer stream — the copilot
+		// is independently opt-in via --copilot, not gated by --observer.
+		observer.SetEnabled(true)
+
 		evt := copilot.Event{
 			Type: observer.EventType(typeStr),
 			Data: dataMap,

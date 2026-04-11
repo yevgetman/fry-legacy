@@ -14,6 +14,7 @@ import (
 
 func TestEmitEventWritesBothStreams(t *testing.T) {
 	t.Parallel()
+	observer.SetEnabled(true)
 	dir := t.TempDir()
 
 	evt := Event{

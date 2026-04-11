@@ -77,6 +77,7 @@ func TestShouldWakeUp_EmptyEffort(t *testing.T) {
 
 func TestInitBuild_CreatesDirAndResetsScratchpad(t *testing.T) {
 	t.Parallel()
+	SetEnabled(true)
 
 	dir := t.TempDir()
 
@@ -105,6 +106,7 @@ func TestInitBuild_CreatesDirAndResetsScratchpad(t *testing.T) {
 
 func TestInitBuild_ClearsStaleEvents(t *testing.T) {
 	t.Parallel()
+	SetEnabled(true)
 
 	dir := t.TempDir()
 
@@ -128,6 +130,7 @@ func TestInitBuild_ClearsStaleEvents(t *testing.T) {
 
 func TestInitBuild_DoesNotWriteIdentity(t *testing.T) {
 	t.Parallel()
+	SetEnabled(true)
 
 	dir := t.TempDir()
 
@@ -142,6 +145,7 @@ func TestInitBuild_DoesNotWriteIdentity(t *testing.T) {
 
 func TestResumeSession_PreservesScratchpadAndEvents(t *testing.T) {
 	t.Parallel()
+	SetEnabled(true)
 
 	dir := t.TempDir()
 	require.NoError(t, InitNewSession(dir, "TestEpic", "high", 3))
@@ -220,6 +224,7 @@ func TestAppendScratchpad_CreatesMissingFile(t *testing.T) {
 
 func TestWakeUp_Success(t *testing.T) {
 	t.Parallel()
+	SetEnabled(true)
 
 	dir := t.TempDir()
 	require.NoError(t, InitBuild(dir, "TestEpic", "high", 3))
@@ -247,6 +252,7 @@ func TestWakeUp_Success(t *testing.T) {
 
 func TestWakeUp_UpdatesScratchpad(t *testing.T) {
 	t.Parallel()
+	SetEnabled(true)
 
 	dir := t.TempDir()
 	require.NoError(t, InitBuild(dir, "TestEpic", "high", 3))
@@ -273,6 +279,7 @@ func TestWakeUp_UpdatesScratchpad(t *testing.T) {
 
 func TestWakeUp_IdentityReadOnly(t *testing.T) {
 	t.Parallel()
+	SetEnabled(true)
 
 	dir := t.TempDir()
 	require.NoError(t, InitBuild(dir, "TestEpic", "high", 3))
@@ -301,6 +308,7 @@ func TestWakeUp_IdentityReadOnly(t *testing.T) {
 
 func TestWakeUp_EngineFailure(t *testing.T) {
 	t.Parallel()
+	SetEnabled(true)
 
 	dir := t.TempDir()
 	require.NoError(t, InitBuild(dir, "TestEpic", "high", 3))
@@ -329,6 +337,7 @@ func TestWakeUp_EngineFailure(t *testing.T) {
 
 func TestWakeUp_ContextCancelled(t *testing.T) {
 	t.Parallel()
+	SetEnabled(true)
 
 	dir := t.TempDir()
 	require.NoError(t, InitBuild(dir, "TestEpic", "high", 3))
@@ -357,6 +366,7 @@ func TestWakeUp_ContextCancelled(t *testing.T) {
 
 func TestWakeUp_NilEngine(t *testing.T) {
 	t.Parallel()
+	SetEnabled(true)
 
 	dir := t.TempDir()
 
@@ -376,6 +386,7 @@ func TestWakeUp_NilEngine(t *testing.T) {
 
 func TestWakeUp_ParseFailureQuarantinesTranscript(t *testing.T) {
 	t.Parallel()
+	SetEnabled(true)
 
 	dir := t.TempDir()
 	require.NoError(t, InitBuild(dir, "TestEpic", "high", 3))
@@ -403,6 +414,7 @@ func TestWakeUp_ParseFailureQuarantinesTranscript(t *testing.T) {
 
 func TestWakeUp_RepairsTranscriptPreamble(t *testing.T) {
 	t.Parallel()
+	SetEnabled(true)
 
 	dir := t.TempDir()
 	require.NoError(t, InitBuild(dir, "TestEpic", "high", 3))

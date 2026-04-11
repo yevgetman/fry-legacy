@@ -6,10 +6,20 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	"github.com/yevgetman/fry/internal/config"
 )
+
+// enabled controls whether EmitEvent writes to disk. When false (the default),
+// EmitEvent is a no-op. Call SetEnabled(true) to activate event recording.
+var enabled atomic.Bool
+
+// SetEnabled controls whether the observer event stream is active. When false,
+// EmitEvent silently discards events. This should be called early in the build
+// based on the --observer flag.
+func SetEnabled(v bool) { enabled.Store(v) }
 
 // EventType identifies the kind of build event recorded in the observer stream.
 type EventType string
@@ -84,8 +94,12 @@ type Event struct {
 }
 
 // EmitEvent appends a JSON-line event to the events file.
-// Creates the observer directory if needed.
+// Creates the observer directory if needed. Returns nil immediately
+// if the observer is not enabled (see SetEnabled).
 func EmitEvent(projectDir string, evt Event) error {
+	if !enabled.Load() {
+		return nil
+	}
 	if evt.Timestamp == "" {
 		evt.Timestamp = time.Now().UTC().Format(time.RFC3339)
 	}

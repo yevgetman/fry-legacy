@@ -781,6 +781,7 @@ var runCmd = &cobra.Command{
 
 		// Initialize observer metacognitive layer
 		observerEnabled := runObserver && !runNoObserver && !runDryRun && ep.EffortLevel != epic.EffortFast
+		observer.SetEnabled(observerEnabled)
 		settings := consciousness.LoadSettings()
 		var telemetryFlag *bool
 		if runNoTelemetry {

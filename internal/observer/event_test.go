@@ -12,8 +12,25 @@ import (
 	"github.com/yevgetman/fry/internal/config"
 )
 
+func TestEmitEvent_DisabledIsNoop(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	SetEnabled(false)
+	err := EmitEvent(dir, Event{Timestamp: "2026-01-01T00:00:00Z", Type: EventBuildStart})
+	require.NoError(t, err)
+
+	// No directory or file should have been created
+	_, err = os.Stat(filepath.Join(dir, config.ObserverDir))
+	assert.True(t, os.IsNotExist(err), "observer dir should not exist when disabled")
+
+	// Re-enable for subsequent tests
+	SetEnabled(true)
+}
+
 func TestEmitEvent_CreatesDirectory(t *testing.T) {
 	t.Parallel()
+	SetEnabled(true)
 
 	dir := t.TempDir()
 	evt := Event{
@@ -32,6 +49,7 @@ func TestEmitEvent_CreatesDirectory(t *testing.T) {
 
 func TestEmitEvent_AppendsMultiple(t *testing.T) {
 	t.Parallel()
+	SetEnabled(true)
 
 	dir := t.TempDir()
 
@@ -55,6 +73,7 @@ func TestEmitEvent_AppendsMultiple(t *testing.T) {
 
 func TestEmitEvent_ValidJSON(t *testing.T) {
 	t.Parallel()
+	SetEnabled(true)
 
 	dir := t.TempDir()
 	evt := Event{
@@ -78,6 +97,7 @@ func TestEmitEvent_ValidJSON(t *testing.T) {
 
 func TestEmitEvent_SetsTimestamp(t *testing.T) {
 	t.Parallel()
+	SetEnabled(true)
 
 	dir := t.TempDir()
 	evt := Event{
@@ -105,6 +125,7 @@ func TestReadEvents_MissingFile(t *testing.T) {
 
 func TestReadEvents_MultipleEvents(t *testing.T) {
 	t.Parallel()
+	SetEnabled(true)
 
 	dir := t.TempDir()
 	for i := 0; i < 5; i++ {
@@ -126,6 +147,7 @@ func TestReadEvents_MultipleEvents(t *testing.T) {
 
 func TestReadRecentEvents_LimitsCount(t *testing.T) {
 	t.Parallel()
+	SetEnabled(true)
 
 	dir := t.TempDir()
 	for i := 0; i < 10; i++ {
@@ -148,6 +170,7 @@ func TestReadRecentEvents_LimitsCount(t *testing.T) {
 
 func TestReadRecentEvents_ZeroN(t *testing.T) {
 	t.Parallel()
+	SetEnabled(true)
 
 	dir := t.TempDir()
 	err := EmitEvent(dir, Event{Timestamp: "2026-01-01T00:00:00Z", Type: EventBuildStart})
@@ -160,6 +183,7 @@ func TestReadRecentEvents_ZeroN(t *testing.T) {
 
 func TestReadRecentEvents_NegativeN(t *testing.T) {
 	t.Parallel()
+	SetEnabled(true)
 
 	dir := t.TempDir()
 	err := EmitEvent(dir, Event{Timestamp: "2026-01-01T00:00:00Z", Type: EventBuildStart})
@@ -172,6 +196,7 @@ func TestReadRecentEvents_NegativeN(t *testing.T) {
 
 func TestReadRecentEvents_FewerThanN(t *testing.T) {
 	t.Parallel()
+	SetEnabled(true)
 
 	dir := t.TempDir()
 	err := EmitEvent(dir, Event{
