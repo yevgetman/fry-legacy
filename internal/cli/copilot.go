@@ -76,30 +76,24 @@ var copilotStatusCmd = &cobra.Command{
 		cronID := copilot.ReadCronIDFile(dir)
 		events, _ := copilot.ReadEvents(dir)
 		counts := copilot.CountEventsByType(events)
-		hasWakeEvents := counts[observer.EventCopilotWakeStart] > 0
-
-		// Liveness derives from build PID + at least one wake event.
-		// The bootstrap subprocess is short-lived (claude -p exits after
-		// running the bootstrap prompt) — its PID is NOT a copilot-alive
-		// indicator. The copilot's own cron (installed via CronCreate)
-		// keeps the session responsive across wakes; its presence is
-		// signalled by wake events in events.jsonl.
+		hasCron := cronID != ""
 		buildAlive := manifest.BuildPID > 0 && processAlive(manifest.BuildPID)
 
 		if jsonOut {
 			return json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]any{
-				"status":       statusVerbFromState(buildAlive, hasWakeEvents),
+				"status":       statusVerbFromState(buildAlive, hasCron),
 				"manifest":     manifest,
 				"snapshot":     snapshot,
 				"busy":         busy,
 				"build_alive":  buildAlive,
+				"has_cron":     hasCron,
 				"event_counts": counts,
 				"event_total":  len(events),
 			})
 		}
 
 		out := cmd.OutOrStdout()
-		fmt.Fprintf(out, "Copilot status: %s\n", strings.ToUpper(statusVerbFromState(buildAlive, hasWakeEvents)))
+		fmt.Fprintf(out, "Copilot status: %s\n", strings.ToUpper(statusVerbFromState(buildAlive, hasCron)))
 		fmt.Fprintf(out, "  Engine:              %s", manifest.Engine)
 		if manifest.Model != "" {
 			fmt.Fprintf(out, " (%s)", manifest.Model)
@@ -142,11 +136,11 @@ var copilotStatusCmd = &cobra.Command{
 			fmt.Fprintf(out, "                       %s --resume %s\n", manifest.Engine, manifest.SessionID)
 		}
 
-		// Exit non-zero on stale state for scripting: at least one wake
-		// event has been recorded, but the build process has since died.
-		// The wake event signals the scheduler was once running — the
-		// dead PID means it isn't anymore.
-		if hasWakeEvents && !buildAlive {
+		// Exit non-zero on stale state for scripting: the copilot once
+		// had a cron installed but it's gone now, AND the build is dead.
+		// This means the copilot has fully exited. If the cron is still
+		// active, the copilot is alive (possibly recovering a crashed build).
+		if !hasCron && !buildAlive && len(events) > 0 {
 			return cobraExitWithCode(2)
 		}
 		return nil
@@ -366,9 +360,8 @@ var copilotRestartCmd = &cobra.Command{
 		oldSession := manifest.SessionID
 
 		// Immediate re-bootstrap: generate new session, write manifest,
-		// render prompt, spawn subprocess. The in-process scheduler will
-		// adopt the new session ID on its next tick by reading the updated
-		// manifest.
+		// render prompt, spawn subprocess. The new session installs its
+		// own cron; the old session's cron self-prunes via orphan check.
 		probe := copilot.EngineProbeResult{Engine: manifest.Engine}
 		if manifest.Engine == "claude" {
 			probe = copilot.ProbeClaudeCapabilities()
@@ -767,24 +760,22 @@ func boolYesNo(b bool) string {
 
 // statusVerbFromState returns the human-readable session state.
 //
-//   - "absent"  : the build is not alive AND no wakes have ever fired
-//   - "starting": the build is alive but the in-process scheduler has
-//     not produced its first wake event yet (bootstrap in flight)
-//   - "stale"   : at least one wake fired previously, but the build PID
-//     is now dead
-//   - "active"  : the build is alive and the in-process scheduler has
-//     produced at least one wake event
+//   - "absent"    : no build alive AND no copilot cron installed
+//   - "starting"  : build is alive but copilot hasn't installed its cron yet
+//   - "recovering": build PID is dead but copilot's cron is active
+//     (copilot will attempt BUILD CRASH RECOVERY on its next wake)
+//   - "active"    : build is alive and copilot's cron is installed
 //
-// The copilot installs its own cron via CronCreate and writes the ID to
-// .fry/copilot/cron.id. Wake event presence in events.jsonl is the
-// authoritative signal that the cron is firing.
-func statusVerbFromState(buildAlive bool, hasWakeEvents bool) string {
+// The cron.id file is the authoritative copilot liveness signal — if it
+// exists and is non-empty, the copilot has an active cron regardless of
+// whether the build PID is alive.
+func statusVerbFromState(buildAlive bool, hasCron bool) string {
 	switch {
-	case !buildAlive && !hasWakeEvents:
+	case !buildAlive && !hasCron:
 		return "absent"
-	case !buildAlive:
-		return "stale"
-	case !hasWakeEvents:
+	case !buildAlive && hasCron:
+		return "recovering"
+	case buildAlive && !hasCron:
 		return "starting"
 	default:
 		return "active"

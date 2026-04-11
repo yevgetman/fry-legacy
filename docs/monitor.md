@@ -169,7 +169,7 @@ When [the copilot](copilot.md) is enabled (via `--copilot` or auto-enabled at `-
 |---|---|
 | `copilot_bootstrap` | Initial spawn — copilot session created |
 | `copilot_cron_installed` | Bootstrap subprocess installed its recurring schedule |
-| `copilot_wake_start` / `copilot_wake_end` | Per-tick begin/end (every 10m by default) |
+| `copilot_wake_start` / `copilot_wake_end` | Per-tick begin/end (emitted by the agent via `fry copilot emit-event`, every 10m by default) |
 | `copilot_anomaly_detected` | The copilot identified a pattern worth investigating |
 | `copilot_intervention_started` / `copilot_intervention_completed` / `copilot_intervention_failed` | Per-intervention lifecycle |
 | `copilot_fry_bug_fix` | The copilot edited the fry source tree |

@@ -312,9 +312,8 @@ func buildEngineArgs(opts BootstrapOpts, sessionID string) []string {
 		}
 		return args
 	case "codex":
-		// Codex copilot uses an in-process tick scheduler instead of
-		// CronCreate. The bootstrap subprocess just runs the bootstrap
-		// prompt; subsequent ticks are spawned by fry's main process.
+		// Codex bootstrap subprocess runs the bootstrap prompt. The agent
+		// installs its own recurring schedule during bootstrap, same as claude.
 		args := []string{"codex", "exec"}
 		if opts.Model != "" {
 			args = append(args, "--model", opts.Model)

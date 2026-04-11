@@ -23,15 +23,14 @@ Skip the copilot when:
 
 ### Persistent session model
 
-The copilot is **one logical Claude Code session**, identified by a stable session UUID. The *processes* that run inside that session are short-lived: each tick is its own `claude --resume <session-id> -p` invocation that exits after producing output. What ties them together is the shared session UUID and the **fry-main-owned tick scheduler** that resumes the session on a periodic timer.
+The copilot is **one logical Claude Code session**, identified by a stable session UUID. The *processes* that run inside that session are short-lived: each tick is its own `claude --resume <session-id>` invocation that exits after producing output. What ties them together is the shared session UUID and the **agent-owned cron** (installed via CronCreate during bootstrap) that resumes the session on a periodic timer. The copilot is fully independent of fry main and survives fry crashes.
 
 The mental model:
 
 - **The session is the conversation, not a long-running process.** Claude Code stores the conversation under `~/.claude/projects/<hash>/<session-id>.jsonl`. Any process that resumes that session sees the full history.
-- **fry main is the scheduler.** A goroutine inside fry main fires every `--copilot-interval` (default 10m) and spawns a fresh `claude --resume <session-id> -p "<wake msg>"` subprocess. Each tick runs one pass of the Tick Checklist and exits. The goroutine starts after the bootstrap subprocess completes and stops when fry main exits (via deferred cleanup). This replaces an earlier design that tried to use Claude Code's `CronCreate` tool — that approach failed because `CronCreate` jobs live only inside the parent claude session, and the bootstrap subprocess (`claude -p`) exits seconds after installing the cron, taking the cron with it.
-- **First tick fires after a 60-second warm-up.** Sprint-1 setup failures (e.g., docker port conflicts) usually happen within seconds of bootstrap. The warm-up gives fry main a chance to finish sprint setup before the copilot's first tick fires; the 60s window is short enough to catch early failures and still leave the copilot useful as an early-warning system.
-- **`bootstrap.pid` is informational, not a liveness signal.** The bootstrap subprocess exits within seconds of finishing its setup turn. `fry copilot status` reports liveness based on the *build* PID plus the presence of `copilot_wake_start` events in `events.jsonl` — the wake events are the authoritative signal that the in-process scheduler is firing. (The `cron.id` file is from the deprecated CronCreate-based design and no longer drives status.)
-- **Each wake message includes the current UTC time.** fry's `TickScheduler` passes a fresh `Current UTC time: <ISO>` field in every wake message so the agent has a ground-truth timestamp for events.txt and scratchpad entries. This is critical because the bootstrap prompt is rendered once at session start; any `{{.NowISO}}` substitution in that prompt is frozen, and the agent would otherwise reuse the bootstrap timestamp for every wake. The bootstrap template uses an explicit `<UTC NOW>` placeholder in all wake-time entries to make this contract visible to the agent.
+- **The copilot owns its own schedule.** During bootstrap, the copilot agent installs a cron via Claude Code's `CronCreate` tool and writes the cron ID to `.fry/copilot/cron.id`. Each cron tick spawns a `claude --resume <session-id>` subprocess that runs one pass of the Tick Checklist and exits. This design means the copilot survives fry crashes and can detect and recover from them via the BUILD CRASH RECOVERY procedure.
+- **`bootstrap.pid` is informational, not a liveness signal.** The bootstrap subprocess exits within seconds of finishing its setup turn. `fry copilot status` reports liveness based on the presence of `.fry/copilot/cron.id` — if the file exists and is non-empty, the copilot has an active cron. The build PID is tracked separately to distinguish "active" (build + cron alive) from "recovering" (build dead, cron alive).
+- **The agent gets its own timestamps.** The bootstrap prompt is rendered once at session start; any `{{.NowISO}}` substitution is frozen. On each wake, the agent runs `date -u` in a shell to get the current UTC time. The bootstrap template uses an explicit `<UTC NOW>` placeholder in all wake-time entries to make this contract visible to the agent.
 - **Auto-compact handles growth.** A 6-hour build × 10 min ticks ≈ 180k tokens, well under 1M.
 - **Attach is trivial.** One stable session ID. `fry copilot attach` resumes it.
 - **Cost is lower than per-tick re-bootstrapping.** Each tick reuses the conversation context instead of re-embedding identity, authority, and build state.
@@ -51,26 +50,25 @@ fry main: print startup banner with attach instructions
    ↓
 bootstrap subprocess: read identity + authority + bootstrap prompt
 bootstrap subprocess: append events.txt bootstrap line
+bootstrap subprocess: call CronCreate → install recurring wake every 10 minutes
+bootstrap subprocess: write cron ID to .fry/copilot/cron.id
 bootstrap subprocess: exit  ← (claude -p runs once and terminates)
    ↓
-fry main: start TickScheduler goroutine
+   (cron fires every 10 minutes — independent of fry main:)
    ↓
-   (after 60s warmup, then every 10 minutes:)
-   ↓
-TickScheduler: spawn fresh `claude --resume <session-id> -p "<wake msg>"` subprocess
+cron wake: `claude --resume <session-id>` subprocess starts
+   get current time via `date -u`
    re-read state-snapshot.json
-   run tick checklist
-   intervene if needed (FRY-SOURCE / ARTIFACT / RESTART procedures)
+   run tick checklist (including orphan check, crash detection)
+   intervene if needed (FRY-SOURCE / ARTIFACT / CRASH RECOVERY procedures)
    update events.txt, scratchpad.md, interventions/
    subprocess exits  ← (each tick is its own short-lived process)
    ↓
-   (build completes or fails — next tick detects it:)
+   (build completes, fails, or crashes — next cron wake detects it:)
    ↓
 final tick: write .fry/copilot/final-summary.md
-final tick: emit copilot_final_summary, exit subprocess
-   ↓
-fry main: exit (deferred cleanup) → TickScheduler.Stop()
-   no more ticks fire
+final tick: call CronDelete, remove .fry/copilot/cron.id
+final tick: exit — no more wakes fire
 ```
 
 ### State snapshot
@@ -79,8 +77,8 @@ fry's main process writes `.fry/copilot/state-snapshot.json` at every observer w
 
 To prevent the snapshot from going stale during long-running phases (where no observer events fire for minutes at a time), two additional refresh points exist:
 
-1. **Tick-time refresh.** The in-process `TickScheduler` calls `ForceWriteStateSnapshot` at the start of every tick, just before the wake-start event is emitted. This guarantees the agent reads up-to-date `build_phase`, `current_sprint`, and `recent_events_tail` values when it wakes.
-2. **CLI-time refresh.** `fry copilot status` calls `ForceWriteStateSnapshot` before reading the snapshot file, so users querying the CLI never see stale state. This bypasses the 10-second debounce — `Force*` is exempt by design.
+1. **Observer event boundaries.** `WriteStateSnapshot` is called at sprint_start, sprint_complete, audit boundaries, etc. The snapshot ordering fix (commit b261a2e) ensures the snapshot is written after `writeCurrentBuildStatus()` so the agent sees current data.
+2. **CLI-time overlay.** `fry copilot status` reads `build-status.json` directly and overlays fresh fields onto the on-disk snapshot. It does NOT call `ForceWriteStateSnapshot` (which would clobber BuildPID with the CLI's ephemeral PID — Bug 16).
 
 Both refresh points are bounded by the existing manifest gate (`CopilotConfigured`), so they are no-ops when the project has no copilot.
 
@@ -116,7 +114,7 @@ Both refresh points are bounded by the existing manifest gate (`CopilotConfigure
 ```
 fry run --copilot                      # enable, default engine claude
 fry run --copilot=claude               # explicit engine
-fry run --copilot=codex                # use codex (in-process scheduler fallback)
+fry run --copilot=codex                # use codex engine
 fry run --copilot-interval=15m         # change wake interval (1m–1h)
 fry run --copilot-fry-source=/path     # explicit fry source dir
 fry run --copilot-model=opus[1m]       # override model
@@ -305,8 +303,8 @@ Messages you send become part of the conversation. The copilot logs them under "
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `copilot status` shows `STARTING` forever | bootstrap subprocess crashed before the in-process scheduler emitted its first wake event, OR the scheduler goroutine failed to start | check `.fry/copilot/bootstrap.log` and `.fry/copilot/events.jsonl` for `copilot_wake_start` entries |
-| `copilot status` shows `STALE` | at least one wake fired previously, but the build process has since died | the build itself stopped; check fry's main log and consider `fry run --continue` |
+| `copilot status` shows `STARTING` forever | bootstrap subprocess crashed before the agent could install its cron via CronCreate | check `.fry/copilot/bootstrap.log`; verify `.fry/copilot/cron.id` exists |
+| `copilot status` shows `RECOVERING` | the build process died but the copilot's cron is still active | this is expected — the copilot detects the crash and attempts BUILD CRASH RECOVERY on its next wake |
 | Session ID is `(pending)` | engine doesn't support `--session-id`; capture from stdout failed | check bootstrap.log for the result event; manifest will be updated when the agent emits it |
 | `attach` fails with "session ID is not yet captured" | bootstrap is still running | wait 30s and retry, or check bootstrap.log |
 | `attach` exits with code 3 | tick.lock is held by a live process | wait ~30s and retry, or use `--print-only` |
@@ -317,7 +315,7 @@ Messages you send become part of the conversation. The copilot logs them under "
 
 ## Limitations
 
-- **`fry clean` and the fry-main scheduler.** The current copilot architecture uses an in-process tick scheduler owned by fry main, so `fry clean` automatically stops the schedule when fry main exits — there is no external cron to cancel. (Earlier versions of fry tried to use Claude Code's `CronCreate` tool, which created stale cron jobs that persisted across `fry clean`. That code path has been removed; the leftover-cron warning fry still prints when it sees a non-empty `.fry/copilot/cron.id` exists for back-compat with sessions started by older fry binaries.)
+- **`fry clean` cannot cancel external crons.** The copilot's cron lives in Claude Code's runtime, not in `.fry/`. `fry clean` archives the project dir but cannot cancel the cron directly. The orphan agent self-prunes on its next wake — Tick Checklist step 0 detects the missing manifest, calls CronDelete, removes `cron.id`, and exits. If it persists, resume the orphan with `claude --resume <session-id>` and ask it to delete its cron.
 - **Manifest `cron_id` is hydrated from disk on read.** fry main writes the manifest before the agent installs the cron, so the on-disk manifest's `cron_id` field is always empty. `ReadManifest()` populates it from `.fry/copilot/cron.id` on every read so callers see a consistent view.
 
 ## Events

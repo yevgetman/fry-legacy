@@ -104,7 +104,7 @@ fry run --sprint 3         # Start from sprint 3 (uses .fry/epic.md)
 | `--no-project-overview` | Skip interactive confirmations (triage classification and project overview) |
 | `--no-audit` | Disable sprint and build audits for this run |
 | `--no-observer` | Disable the observer metacognitive layer (event stream and wake-ups). Observer is also disabled at `fast` effort and during `--dry-run`. See [Observer](observer.md). |
-| `--copilot[=<engine>]` | Enable the build copilot. Default engine is `claude`. Use `--copilot=codex` to choose codex (in-process scheduler fallback). Auto-enabled at `--effort=max` unless `--no-copilot` is set. See [Copilot](copilot.md). |
+| `--copilot[=<engine>]` | Enable the build copilot. Default engine is `claude`. Use `--copilot=codex` for codex. The copilot runs independently — it installs its own cron and survives fry crashes. Auto-enabled at `--effort=max` unless `--no-copilot` is set. See [Copilot](copilot.md). |
 | `--copilot-interval <duration>` | Copilot wake interval (default `10m`, range `1m`–`1h`). |
 | `--copilot-fry-source <path>` | Path to the fry source tree the copilot may edit. Default: auto-detected from the running binary, then `$FRY_SOURCE_DIR`, then standard locations. |
 | `--copilot-model <model>` | Override the copilot agent model. |
@@ -942,7 +942,7 @@ fry copilot emit-event --type=<type> --data=<json>   # internal helper used BY t
 # Force copilot on at any effort level (default engine: claude)
 fry run --copilot
 
-# Pick a specific engine (claude is default; codex falls back to in-process scheduler)
+# Pick a specific engine (claude is default; codex also supported)
 fry run --copilot=claude
 fry run --copilot=codex
 

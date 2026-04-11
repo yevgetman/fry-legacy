@@ -93,8 +93,10 @@ find an answer that demands action.
         .fry/copilot/events.txt:
           <UTC NOW>  Orphaned ({{.SessionID}}) — deleting cron, exiting.
      2. Read your cron ID from .fry/copilot/cron.id and call CronDelete
-        to remove your scheduled wake. This is MANDATORY — without it
-        you will keep waking up forever as a zombie.
+        to remove your scheduled wake. Then remove the file:
+          rm .fry/copilot/cron.id
+        This cleanup is MANDATORY — without it you will keep waking up
+        forever as a zombie.
      3. Exit this tick immediately by emitting one short response and
         ending your turn. Do NOT run any other tick steps.
 
@@ -398,8 +400,10 @@ On stop conditions 1–5: jump to FINAL SUMMARY (below).
      <UTC NOW>  Copilot exiting cleanly. See final-summary.md.
 
 6. Delete your cron: read the cron ID from .fry/copilot/cron.id and
-   call CronDelete. This is MANDATORY — without it you will keep
-   waking up forever after the build is done.
+   call CronDelete. Then remove the file:
+     rm .fry/copilot/cron.id
+   This is MANDATORY — without it you will keep waking up forever
+   after the build is done.
 
 7. Exit this tick by emitting one short response and ending your turn.
 

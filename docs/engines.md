@@ -237,8 +237,8 @@ Engine compatibility for the copilot:
 
 | Engine | Persistent session mechanism | Notes |
 |---|---|---|
-| `claude` | fry-main-owned in-process tick scheduler — bootstrap subprocess sets up state and exits, then a goroutine inside fry main spawns `claude --resume <session-id> -p "<wake msg>"` every interval | Recommended. The copilot is tied to fry main's lifetime: when fry exits, the scheduler stops and no further ticks fire. First tick fires after a 60-second warm-up so it catches sprint-1 setup failures. |
-| `codex` | Same in-process scheduler — bootstrap is `codex exec`, ticks are `codex exec resume <session-id>` | Same lifetime model as claude. |
+| `claude` | Independent cron — bootstrap subprocess installs its own cron via CronCreate, writes cron ID to `.fry/copilot/cron.id`. Cron wakes `claude --resume <session-id>` every interval. | Recommended. The copilot is independent of fry main — it survives fry crashes and can restart the build via `fry run --continue`. |
+| `codex` | Independent cron — bootstrap is `codex exec`, cron wakes `codex exec resume <session-id>` | Same independence model as claude. |
 | `ollama` | Not supported | The copilot bootstrap will fall back to claude with a warning. |
 
 The copilot engine and the build engine are resolved independently — they have separate `engine.RunOpts` and separate session IDs. See [Copilot](copilot.md) for the full feature documentation.
