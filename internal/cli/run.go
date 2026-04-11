@@ -2179,27 +2179,6 @@ var runCmd = &cobra.Command{
 			}
 		}
 
-		if steering.HasStopRequest(projectPath) && ep.TotalSprints > 0 {
-			lastSprint := &ep.Sprints[ep.TotalSprints-1]
-			if settleErr := settleGracefulExit(
-				ctx,
-				cmd.OutOrStdout(),
-				projectPath,
-				originalProjectPath,
-				buildStatus,
-				ep,
-				lastSprint,
-				"build_audit",
-				"after build summary and before final build finalization",
-				steering.ResumeVerdictAuditIncomplete,
-				false,
-				observerEnabled,
-			); settleErr != nil {
-				return settleErr
-			}
-			return nil
-		}
-
 		// Determine build outcome for observer and collector
 		buildOutcome := "success"
 		if exitErr != nil {

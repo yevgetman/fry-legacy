@@ -97,10 +97,16 @@ func gitCleanup(ctx context.Context, opts FinalizeOpts) {
 		frylog.Log("  GIT: merging worktree branch %s into %s...", setup.BranchName, setup.OriginalBranch)
 		if err := git.MergeAndCleanupWorktree(ctx, setup); err != nil {
 			frylog.Log("WARNING: worktree merge failed: %v", err)
+			// Merge failed but build succeeded — force-clean the worktree
+			// so the repository is left in a clean state (equivalent of fry clean).
+			frylog.Log("  GIT: force-cleaning worktree after failed merge...")
+			if removed := git.CleanupWorktrees(ctx, setup.OriginalDir); removed > 0 {
+				frylog.Log("  GIT: removed %d worktree dir(s)", removed)
+			}
 		} else {
 			frylog.Log("  GIT: worktree merged and cleaned up")
-			setup.MarkCleanedUp()
 		}
+		setup.MarkCleanedUp()
 
 	case setup.IsWorktree && !success:
 		frylog.Log("  GIT: removing worktree (build failed, branch %s preserved for inspection)", setup.BranchName)

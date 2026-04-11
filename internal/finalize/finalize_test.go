@@ -343,6 +343,68 @@ func TestFinalizeFailure_WorktreeStrategy(t *testing.T) {
 	assert.True(t, setup.IsCleanedUp(), "strategy should be marked cleaned up")
 }
 
+func TestFinalizeSuccess_WorktreeMergeFailsFallbackCleans(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dir := setupRepo(t, ctx)
+
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.CommandContext(ctx, "git", args...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %s: %s", strings.Join(args, " "), string(out))
+	}
+
+	branchName := "fry/conflict-wt"
+	wtDir := filepath.Join(dir, config.GitWorktreeDir, "conflict-wt")
+	require.NoError(t, os.MkdirAll(filepath.Dir(wtDir), 0o755))
+	run("worktree", "add", "-b", branchName, wtDir)
+
+	// Create a conflicting commit in the worktree
+	require.NoError(t, os.WriteFile(filepath.Join(wtDir, "README.md"), []byte("worktree version"), 0o644))
+	wtRun := func(args ...string) {
+		t.Helper()
+		cmd := exec.CommandContext(ctx, "git", args...)
+		cmd.Dir = wtDir
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %s: %s", strings.Join(args, " "), string(out))
+	}
+	wtRun("add", "README.md")
+	wtRun("commit", "-m", "worktree change")
+
+	// Create a conflicting commit on main so the merge will fail
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "README.md"), []byte("main version"), 0o644))
+	run("add", "README.md")
+	run("commit", "-m", "conflicting main change")
+
+	createFryDir(t, wtDir)
+
+	setup := &git.StrategySetup{
+		WorkDir:        wtDir,
+		OriginalDir:    dir,
+		BranchName:     branchName,
+		OriginalBranch: "main",
+		Strategy:       git.StrategyWorktree,
+		IsWorktree:     true,
+	}
+
+	Finalize(ctx, FinalizeOpts{
+		ProjectPath:         wtDir,
+		OriginalProjectPath: dir,
+		StrategySetup:       setup,
+		BuildErr:            nil,
+	})
+
+	// Worktree directory should be cleaned up even though merge failed
+	_, err := os.Stat(wtDir)
+	assert.True(t, os.IsNotExist(err), "worktree dir should be removed even after merge failure")
+
+	// Strategy should be marked cleaned up (no stale "preserved" message)
+	assert.True(t, setup.IsCleanedUp(), "strategy should be marked cleaned up")
+}
+
 func TestFinalizeNilStrategy(t *testing.T) {
 	t.Parallel()
 
