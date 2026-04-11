@@ -257,24 +257,17 @@ var runCmd = &cobra.Command{
 			}
 		}()
 
-		// Start the copilot supervisor. It runs for the lifetime of the
-		// build and manages the copilot scheduler lifecycle: starts the
-		// scheduler when a manifest appears (from --copilot bootstrap or
-		// `fry copilot start`), stops it on `fry copilot stop`. This
-		// replaces the previous direct scheduler defer with a unified
-		// lifecycle manager.
-		copilotSupervisor := copilot.StartSupervisor(projectPath)
-		defer copilotSupervisor.Stop()
-
 		// Early copilot bootstrap: start the copilot immediately so it
-		// can watch prepare/triage for hangs and failures. Epic details
-		// are unknown at this point — we use placeholders and update the
-		// manifest once the epic is parsed and the worktree is set up.
+		// can watch prepare/triage for hangs and failures. The copilot is
+		// fully independent — it installs its own cron via CronCreate and
+		// survives fry crashes. Epic details are unknown at this point;
+		// we use placeholders and update the manifest once the epic is
+		// parsed and the worktree is set up.
 		if copilotShouldBootstrap(cmd, "") {
 			copilotEngine := resolveCopilotEngine()
 			frySrcDir := copilot.DiscoverFrySourceDir(runCopilotFrySource)
 			passive := runCopilotPassive || frySrcDir == ""
-			earlyResult, earlyErr := copilot.Bootstrap(copilot.BootstrapOpts{
+			_, earlyErr := copilot.Bootstrap(copilot.BootstrapOpts{
 				ProjectDir:   projectPath,
 				FrySourceDir: frySrcDir,
 				Engine:       copilotEngine,
@@ -291,8 +284,6 @@ var runCmd = &cobra.Command{
 			})
 			if earlyErr != nil {
 				frlog.Log("WARNING: early copilot bootstrap failed: %v", earlyErr)
-			} else if earlyResult != nil && earlyResult.Scheduler != nil {
-				copilotSupervisor.SetScheduler(earlyResult.Scheduler)
 			}
 		}
 
@@ -820,15 +811,6 @@ var runCmd = &cobra.Command{
 			}
 		}
 
-		// Always relocate the supervisor to the worktree if the project
-		// path changed, so it looks for manifests in the right place.
-		// This must happen regardless of whether copilotShouldBootstrap
-		// is true — the early bootstrap may have started the supervisor
-		// before the worktree existed.
-		if projectPath != originalProjectPath {
-			copilotSupervisor.Relocate(projectPath)
-		}
-
 		// Copilot promotion (Phase 11). Now that the epic is parsed and
 		// the worktree is set up, update the existing copilot session
 		// with real epic details. The session stays continuous — same
@@ -857,7 +839,7 @@ var runCmd = &cobra.Command{
 				} else {
 					frlog.Log("  COPILOT: promoted with epic=%q, sprints=%d", ep.Name, ep.TotalSprints)
 				}
-				// Supervisor already relocated unconditionally above.
+				// Copilot picks up worktree change on its next cron wake.
 			} else {
 				// No early bootstrap (auto-enable for max effort) — first bootstrap now.
 				copilotEngine := resolveCopilotEngine()
@@ -885,9 +867,6 @@ var runCmd = &cobra.Command{
 					if bootstrapResult.Manifest.Mode == copilot.ModeActive {
 						frlog.Log("  COPILOT: active session %s (engine=%s, interval=%s)",
 							bootstrapResult.Manifest.SessionID, copilotEngine, runCopilotInterval)
-					}
-					if bootstrapResult.Scheduler != nil {
-						copilotSupervisor.SetScheduler(bootstrapResult.Scheduler)
 					}
 				}
 			}

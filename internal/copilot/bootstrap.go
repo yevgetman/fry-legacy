@@ -35,18 +35,15 @@ type BootstrapOpts struct {
 
 // BootstrapResult is the outcome of a successful (or dry-run) bootstrap.
 //
-// Scheduler is the fry-main-owned tick scheduler started after the
-// bootstrap subprocess completes. Callers MUST call Scheduler.Stop()
-// during their cleanup (typically via a deferred call) — otherwise the
-// goroutine will keep ticking and keep spawning subprocesses for the
-// lifetime of the fry main process. In dry-run / passive / error
-// modes, Scheduler is nil.
+// The copilot agent is fully independent of fry main — it installs its
+// own cron via CronCreate during the bootstrap prompt. fry main does NOT
+// manage the copilot's schedule. This means the copilot survives fry
+// crashes and can detect and recover from them.
 type BootstrapResult struct {
 	Manifest         *Manifest
-	BootstrapPID     int // PID of the spawned subprocess (0 in dry-run/passive). Informational only — claude -p exits after running the bootstrap prompt.
+	BootstrapPID     int // PID of the spawned subprocess (0 in dry-run/passive). Informational only — claude -p exits after running the bootstrap prompt, but the cron it installed continues waking the session.
 	BootstrapLogPath string
 	BannerLines      []string // the lines that were printed to stdout
-	Scheduler        *TickScheduler
 }
 
 // Bootstrap spawns the copilot subprocess (or skips spawning in dry-run/
@@ -194,32 +191,11 @@ func Bootstrap(opts BootstrapOpts) (*BootstrapResult, error) {
 
 	_ = WriteSessionIDFile(opts.ProjectDir, sessionID)
 
-	// Start the fry-main-owned tick scheduler. Each tick spawns a fresh
-	// `claude --resume <session-id> -p "<wake msg>"` subprocess that runs
-	// one tick and exits. The scheduler runs for the lifetime of fry
-	// main and is stopped by the caller via Scheduler.Stop() in their
-	// deferred cleanup. This replaces the previous CronCreate-based
-	// design which died when the bootstrap subprocess exited.
-	if sessionID != "" {
-		intervalDur, _ := time.ParseDuration(opts.Interval)
-		if intervalDur <= 0 {
-			intervalDur = time.Duration(config.CopilotDefaultIntervalMinutes) * time.Minute
-		}
-		result.Scheduler = StartTickScheduler(SchedulerOpts{
-			ProjectDir:   opts.ProjectDir,
-			SessionID:    sessionID,
-			Engine:       opts.Engine,
-			Model:        opts.Model,
-			Interval:     intervalDur,
-			BuildDir:     opts.ProjectDir,
-			FrySourceDir: opts.FrySourceDir,
-			EpicName:     opts.EpicName,
-			EffortLevel:  opts.EffortLevel,
-			TotalSprints: opts.TotalSprints,
-			RunID:        opts.RunID,
-			BuildPID:     opts.BuildPID,
-		})
-	}
+	// The copilot agent is now fully independent — it installs its own
+	// cron via CronCreate during the bootstrap prompt. fry main does not
+	// manage the copilot's schedule. This means the copilot continues to
+	// tick even if fry main crashes, and can detect the crash and restart
+	// the build via `fry run --continue`.
 
 	result.BannerLines = writeBanner(opts.Stdout, manifest, "")
 

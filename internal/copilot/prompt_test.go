@@ -94,26 +94,24 @@ func TestRenderBootstrapPromptIncludesOrphanCheck(t *testing.T) {
 	assert.Contains(t, prompt, data.SessionID)
 }
 
-func TestRenderBootstrapPromptDoesNotInstructAgentToInstallCron(t *testing.T) {
+func TestRenderBootstrapPromptInstructsAgentToInstallCron(t *testing.T) {
 	t.Parallel()
 
 	prompt, err := RenderBootstrapPrompt(defaultBootstrapData())
 	require.NoError(t, err)
 
-	// fry main owns the schedule now via TickScheduler. The agent must
-	// NOT call CronCreate at all — doing so would create a parallel
-	// cron that fights with the fry-managed loop.
-	assert.NotContains(t, prompt, "CronCreate")
-	assert.NotContains(t, prompt, "Install a recurring schedule")
-	assert.NotContains(t, prompt, "Capture the cron ID returned")
-	// fry main is the scheduler, explained in plain English. Match a
-	// substring that doesn't span a line break.
-	assert.Contains(t, prompt, "fry main owns",
-		"prompt should explain who owns the wake schedule")
-	assert.Contains(t, prompt, "claude --resume",
-		"prompt should explain how fry main spawns each tick")
-	assert.Contains(t, prompt, "scheduler=fry-main",
-		"the bootstrap events.txt line should mark the scheduler source")
+	// The copilot is fully independent — it installs its own cron via
+	// CronCreate so it survives fry crashes.
+	assert.Contains(t, prompt, "CronCreate",
+		"prompt must instruct the agent to install its own cron")
+	assert.Contains(t, prompt, "cron.id",
+		"prompt must instruct the agent to persist the cron ID")
+	assert.Contains(t, prompt, "CronDelete",
+		"prompt must instruct the agent to delete its cron on stop/orphan")
+	assert.Contains(t, prompt, "scheduler=self",
+		"the bootstrap events.txt line should mark the scheduler as self-owned")
+	assert.Contains(t, prompt, "INDEPENDENT",
+		"prompt should explain the copilot is independent of fry main")
 }
 
 func TestRenderBootstrapPromptIncludesAllInterventionProcedures(t *testing.T) {
@@ -164,15 +162,12 @@ func TestRenderBootstrapPromptIncludesTimeHandlingSection(t *testing.T) {
 	prompt, err := RenderBootstrapPrompt(defaultBootstrapData())
 	require.NoError(t, err)
 
-	// The Time handling section was added to fix Bug 14: the agent was
-	// reusing the bootstrap-time {{.NowISO}} value for every wake's
-	// events.txt entries, producing timestamps that drifted further from
-	// reality each tick. The new section explicitly tells the agent to
-	// use the wake-message Current UTC time instead.
+	// The Time handling section tells the agent to get fresh timestamps
+	// via `date -u` rather than reusing the bootstrap-time {{.NowISO}}.
 	assert.Contains(t, prompt, "Time handling",
 		"prompt must include the Time handling section")
-	assert.Contains(t, prompt, "Current UTC time",
-		"prompt must reference the wake-message Current UTC time field")
+	assert.Contains(t, prompt, "date -u",
+		"prompt must tell the agent how to get the current UTC time")
 	assert.Contains(t, prompt, "<UTC NOW>",
 		"prompt must use the <UTC NOW> placeholder so the agent knows what to substitute")
 	assert.Contains(t, prompt, "frozen at session-start time",
@@ -218,7 +213,7 @@ func TestRenderBootstrapPromptDefaultsIntervalMinutes(t *testing.T) {
 	require.NoError(t, err)
 	// Match "15" plus "minutes" within a small window — they may be
 	// separated by a line break in the rendered prompt template.
-	assert.Contains(t, prompt, "every 15m, scheduler=fry-main",
+	assert.Contains(t, prompt, "every 15m, scheduler=self",
 		"the bootstrap events.txt instruction should report the interval")
 	assert.Contains(t, prompt, "every 15",
 		"the schedule explanation should mention the resolved minutes")

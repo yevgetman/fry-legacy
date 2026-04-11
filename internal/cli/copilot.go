@@ -81,9 +81,9 @@ var copilotStatusCmd = &cobra.Command{
 		// Liveness derives from build PID + at least one wake event.
 		// The bootstrap subprocess is short-lived (claude -p exits after
 		// running the bootstrap prompt) — its PID is NOT a copilot-alive
-		// indicator. The in-process TickScheduler owned by fry main is
-		// what keeps the session responsive across wakes; its presence
-		// is signalled by wake events in events.jsonl.
+		// indicator. The copilot's own cron (installed via CronCreate)
+		// keeps the session responsive across wakes; its presence is
+		// signalled by wake events in events.jsonl.
 		buildAlive := manifest.BuildPID > 0 && processAlive(manifest.BuildPID)
 
 		if jsonOut {
@@ -275,16 +275,9 @@ var copilotStartCmd = &cobra.Command{
 		if bootErr != nil {
 			return fmt.Errorf("bootstrap copilot: %w", bootErr)
 		}
+		_ = bootstrapResult // copilot is independent — it installs its own cron
 
-		// The scheduler from Bootstrap is short-lived here — the CLI
-		// process exits soon. The supervisor inside fry main will detect
-		// the new manifest and start its own scheduler. Stop the CLI's
-		// scheduler so it doesn't linger.
-		if bootstrapResult != nil && bootstrapResult.Scheduler != nil {
-			bootstrapResult.Scheduler.Stop()
-		}
-
-		fmt.Fprintln(cmd.OutOrStdout(), "Copilot started. The build's supervisor will begin ticking shortly.")
+		fmt.Fprintln(cmd.OutOrStdout(), "Copilot started. It will install its own cron and begin ticking shortly.")
 		return nil
 	},
 }
@@ -465,7 +458,7 @@ var copilotRestartCmd = &cobra.Command{
 		fmt.Fprintf(cmd.OutOrStdout(), "Copilot restarted with fresh session.\n")
 		fmt.Fprintf(cmd.OutOrStdout(), "  Old session: %s\n", oldSession)
 		fmt.Fprintf(cmd.OutOrStdout(), "  New session: %s\n", newSessionID)
-		fmt.Fprintln(cmd.OutOrStdout(), "  Scheduler will adopt new session on next tick.")
+		fmt.Fprintln(cmd.OutOrStdout(), "  New session will install its own cron. Old session's cron will self-prune on next wake.")
 		return nil
 	},
 }
@@ -782,12 +775,9 @@ func boolYesNo(b bool) string {
 //   - "active"  : the build is alive and the in-process scheduler has
 //     produced at least one wake event
 //
-// Note: cron ID is no longer part of state determination. The original
-// design relied on Claude Code's CronCreate (job ID written to disk) as
-// the liveness signal. The current architecture uses an in-process
-// TickScheduler owned by fry main, which never writes the cron file.
-// Wake event presence in events.jsonl is the authoritative signal that
-// the scheduler is firing.
+// The copilot installs its own cron via CronCreate and writes the ID to
+// .fry/copilot/cron.id. Wake event presence in events.jsonl is the
+// authoritative signal that the cron is firing.
 func statusVerbFromState(buildAlive bool, hasWakeEvents bool) string {
 	switch {
 	case !buildAlive && !hasWakeEvents:
