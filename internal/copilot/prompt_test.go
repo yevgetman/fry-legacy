@@ -65,15 +65,15 @@ func TestRenderBootstrapPromptSubstitutesFields(t *testing.T) {
 	assert.Contains(t, prompt, data.Interval)
 }
 
-func TestRenderBootstrapPromptIncludesTickChecklist(t *testing.T) {
+func TestRenderBootstrapPromptIncludesWakeInstructions(t *testing.T) {
 	t.Parallel()
 
 	prompt, err := RenderBootstrapPrompt(defaultBootstrapData())
 	require.NoError(t, err)
-	assert.Contains(t, prompt, "Tick Checklist")
-	assert.Contains(t, prompt, "IS THE BUILD MAKING PROGRESS")
-	assert.Contains(t, prompt, "IS THERE A REPEATING PATTERN")
-	assert.Contains(t, prompt, "IS THE BUILD STUCK")
+	assert.Contains(t, prompt, "Each Wake")
+	assert.Contains(t, prompt, "Observe the Build")
+	assert.Contains(t, prompt, "Use your judgment")
+	assert.Contains(t, prompt, "Lifecycle Guards")
 }
 
 func TestRenderBootstrapPromptIncludesOrphanCheck(t *testing.T) {
@@ -83,11 +83,11 @@ func TestRenderBootstrapPromptIncludesOrphanCheck(t *testing.T) {
 	prompt, err := RenderBootstrapPrompt(data)
 	require.NoError(t, err)
 
-	// Step 0 of the tick checklist must instruct the agent to detect
-	// orphan status (manifest absent OR session_id mismatch).
+	// Lifecycle guards must instruct the agent to detect orphan status
+	// (manifest absent OR session_id mismatch) and clean up its cron.
 	assert.Contains(t, prompt, "ORPHAN CHECK")
-	assert.Contains(t, prompt, "manifest.json does not exist")
-	assert.Contains(t, prompt, "session_id field")
+	assert.Contains(t, prompt, "manifest.json")
+	assert.Contains(t, prompt, "session_id")
 	assert.Contains(t, prompt, "Orphaned")
 	// The session ID itself must be substituted into the prompt so the
 	// agent can compare against the live manifest.
@@ -188,7 +188,7 @@ func TestRenderBootstrapPromptUsesUTCNowPlaceholderForWakeEntries(t *testing.T) 
 	// substitutes the wake-message time.
 	wakeTimeMarkers := []string{
 		"<UTC NOW>  Orphaned",
-		"<UTC NOW>  wake #N: watched",
+		"<UTC NOW>  wake #N:",
 		"build {{.RunID}}", // commit message frame keeps the run ID
 		"<UTC NOW>  [intervention",
 		"<UTC NOW>  build restarted with new binary",
