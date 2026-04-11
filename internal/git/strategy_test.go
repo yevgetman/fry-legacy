@@ -799,6 +799,76 @@ Please move or remove them before you merge.`
 	})
 }
 
+func TestMergeAndCleanupWorktree_ModifiedTrackedConflict(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.CommandContext(ctx, "git", args...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %s: %s", strings.Join(args, " "), string(out))
+	}
+	run("init")
+	run("config", "user.email", "test@test.com")
+	run("config", "user.name", "test")
+
+	// Create a tracked file and commit it
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "plan.md"), []byte("original plan"), 0o644))
+	run("add", "plan.md")
+	run("commit", "-m", "initial with plan")
+
+	// Create worktree
+	branchName := "fry/modified-conflict"
+	worktreeDir := filepath.Join(dir, ".fry-worktrees", "modified-conflict")
+	require.NoError(t, os.MkdirAll(filepath.Dir(worktreeDir), 0o755))
+	run("worktree", "add", "-b", branchName, worktreeDir)
+
+	// In the worktree, modify and commit the tracked file
+	require.NoError(t, os.WriteFile(filepath.Join(worktreeDir, "plan.md"), []byte("plan from worktree build"), 0o644))
+	wtRun := func(args ...string) {
+		t.Helper()
+		cmd := exec.CommandContext(ctx, "git", args...)
+		cmd.Dir = worktreeDir
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %s: %s", strings.Join(args, " "), string(out))
+	}
+	wtRun("add", "plan.md")
+	wtRun("commit", "-m", "update plan in worktree")
+
+	// In the main checkout, modify the same tracked file WITHOUT committing.
+	// This simulates fry's prepare step modifying plans/plan.md in the main
+	// dir while the build runs in the worktree.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "plan.md"), []byte("locally modified plan"), 0o644))
+
+	setup := &StrategySetup{
+		WorkDir:        worktreeDir,
+		OriginalDir:    dir,
+		BranchName:     branchName,
+		OriginalBranch: "main",
+		Strategy:       StrategyWorktree,
+		IsWorktree:     true,
+	}
+
+	// This should succeed — stash local changes, merge, drop stash
+	err := MergeAndCleanupWorktree(ctx, setup)
+	require.NoError(t, err, "merge should succeed by stashing local changes")
+
+	// Verify the worktree's version won
+	data, err := os.ReadFile(filepath.Join(dir, "plan.md"))
+	require.NoError(t, err)
+	assert.Equal(t, "plan from worktree build", string(data))
+
+	// Verify branch is deleted
+	cmd := exec.CommandContext(ctx, "git", "branch", "--list", branchName)
+	cmd.Dir = dir
+	out, _ := cmd.Output()
+	assert.Empty(t, strings.TrimSpace(string(out)), "branch should be deleted")
+}
+
 func TestMergeAndCleanupWorktree_NilSetup(t *testing.T) {
 	t.Parallel()
 	assert.NoError(t, MergeAndCleanupWorktree(context.Background(), nil))

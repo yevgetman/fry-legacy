@@ -297,12 +297,15 @@ func MergeAndCleanupWorktreeWith(ctx context.Context, setup *StrategySetup, ex E
 
 	// 2. Merge the worktree branch (fast-forward when possible)
 	if err := runGit(ctx, origDir, "merge", branchName, "--no-edit"); err != nil {
-		// If merge failed because untracked files would be overwritten,
-		// temporarily move them aside and retry. This commonly happens
-		// when plans/ (gitignored) was copied into the worktree at setup
-		// and the AI agent committed those files in the worktree branch.
+		// Merge can fail for two reasons:
+		// a) Untracked files would be overwritten — move them aside and retry.
+		// b) Modified tracked files would be overwritten — stash and retry.
+		// Both commonly happen because plans/ and .fry-config/ are gitignored
+		// but get modified during the build in the main checkout.
 		if retryErr := retryMergeMovingUntracked(ctx, origDir, branchName, err); retryErr != nil {
-			return fmt.Errorf("merge %s into %s: %w", branchName, origBranch, retryErr)
+			if retryErr2 := retryMergeStashingLocal(ctx, origDir, branchName, retryErr); retryErr2 != nil {
+				return fmt.Errorf("merge %s into %s: %w", branchName, origBranch, retryErr2)
+			}
 		}
 	}
 
@@ -366,7 +369,9 @@ func MergeAndCleanupBranchWith(ctx context.Context, setup *StrategySetup, ex Exe
 	// 2. Merge the fry branch (fast-forward when possible)
 	if err := runGit(ctx, origDir, "merge", branchName, "--no-edit"); err != nil {
 		if retryErr := retryMergeMovingUntracked(ctx, origDir, branchName, err); retryErr != nil {
-			return fmt.Errorf("merge %s into %s: %w", branchName, origBranch, retryErr)
+			if retryErr2 := retryMergeStashingLocal(ctx, origDir, branchName, retryErr); retryErr2 != nil {
+				return fmt.Errorf("merge %s into %s: %w", branchName, origBranch, retryErr2)
+			}
 		}
 	}
 
@@ -612,6 +617,34 @@ func retryMergeMovingUntracked(ctx context.Context, dir, branchName string, merg
 
 	// Merge succeeded — remove backups
 	_ = os.RemoveAll(backupDir)
+	return nil
+}
+
+// retryMergeStashingLocal handles a merge failure caused by modified tracked
+// files that would be overwritten. It stashes local changes, retries the merge,
+// and drops the stash on success (the merged content supersedes the stashed
+// changes). If the original error is not a local-changes conflict, or if the
+// retry fails, it returns the relevant error and pops the stash to restore state.
+func retryMergeStashingLocal(ctx context.Context, dir, branchName string, mergeErr error) error {
+	const marker = "Your local changes to the following files would be overwritten by merge"
+	if !strings.Contains(mergeErr.Error(), marker) {
+		return mergeErr
+	}
+
+	// Stash the conflicting local changes
+	if err := runGit(ctx, dir, "stash", "push", "-m", "fry-merge-autostash"); err != nil {
+		return mergeErr // stash failed, return original error
+	}
+
+	// Retry the merge
+	if err := runGit(ctx, dir, "merge", branchName, "--no-edit"); err != nil {
+		// Merge still failed — restore stashed changes
+		_ = runGit(ctx, dir, "stash", "pop")
+		return err
+	}
+
+	// Merge succeeded — drop the stash (merged content supersedes)
+	_ = runGit(ctx, dir, "stash", "drop")
 	return nil
 }
 
