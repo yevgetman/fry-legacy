@@ -71,6 +71,7 @@ var (
 	runFullPrepare           bool
 	runGitStrategy           string
 	runBranchName            string
+	runWorktree              bool
 	runAlwaysVerify          bool
 	runSimpleContinue        bool
 	runSARIF                 bool
@@ -138,6 +139,12 @@ var runCmd = &cobra.Command{
 		gitStrategy, err := git.ParseGitStrategy(runGitStrategy)
 		if err != nil {
 			return err
+		}
+		if runWorktree {
+			if runGitStrategy != "" {
+				return fmt.Errorf("--worktree cannot be used with --git-strategy")
+			}
+			gitStrategy = git.StrategyWorktree
 		}
 		if gitStrategy == git.StrategyCurrent && runBranchName != "" {
 			return fmt.Errorf("--branch-name cannot be used with --git-strategy current")
@@ -581,7 +588,7 @@ var runCmd = &cobra.Command{
 		// --- Git strategy setup ---
 		freshInit := repoExistedBeforeRun && git.IsFreshlyInitialized(ctx, projectPath)
 		if strategySetup == nil && gitStrategy != git.StrategyCurrent {
-			gitStrategy = resolveRunGitStrategy(gitStrategy, triageDecision, repoExistedBeforeRun, freshInit)
+			gitStrategy = resolveRunGitStrategy(gitStrategy)
 			if gitStrategy == git.StrategyCurrent && runBranchName != "" {
 				switch {
 				case !repoExistedBeforeRun || freshInit:
@@ -2485,29 +2492,13 @@ var runCmd = &cobra.Command{
 	},
 }
 
-func resolveRunGitStrategy(requested git.GitStrategy, triageDecision *triage.TriageDecision, repoExistedBeforeRun, isFreshlyInitialized bool) git.GitStrategy {
+func resolveRunGitStrategy(requested git.GitStrategy) git.GitStrategy {
 	if requested != git.StrategyAuto {
 		return requested
 	}
 
-	// A repo created for this build — or one that only has the fry-automated
-	// initial commit — has no existing history to isolate, so keep the first
-	// run on the primary branch instead of branching or using a worktree.
-	if !repoExistedBeforeRun || isFreshlyInitialized {
-		return git.StrategyCurrent
-	}
-
-	if triageDecision != nil {
-		if triageDecision.GitStrategyOverride != "" {
-			parsed, err := git.ParseGitStrategy(triageDecision.GitStrategyOverride)
-			if err == nil {
-				return parsed
-			}
-		}
-		return git.ResolveAutoStrategy(string(triageDecision.Complexity))
-	}
-
-	// No triage decision (epic already existed). Default to current for backwards compat.
+	// Auto resolves to current (work on main/master). Use --worktree or
+	// --git-strategy worktree to opt in to worktree isolation.
 	return git.StrategyCurrent
 }
 
@@ -2534,6 +2525,7 @@ func init() {
 	runCmd.Flags().BoolVar(&runFullPrepare, "full-prepare", false, "Skip triage and run full prepare pipeline when no epic exists")
 	runCmd.Flags().StringVar(&runGitStrategy, "git-strategy", "", "Git branching strategy: auto, current, branch, worktree (default: auto)")
 	runCmd.Flags().StringVar(&runBranchName, "branch-name", "", "Git branch name (auto-generated from epic name if not specified)")
+	runCmd.Flags().BoolVar(&runWorktree, "worktree", false, "Run build in a git worktree (isolates changes from the main branch)")
 	runCmd.Flags().BoolVar(&runAlwaysVerify, "always-verify", false, "Force sanity checks, alignment, and audit to run regardless of effort level or triage complexity")
 	runCmd.Flags().BoolVar(&runSimpleContinue, "simple-continue", false, "Resume from first incomplete sprint without LLM analysis (lightweight alternative to --continue)")
 	runCmd.Flags().BoolVar(&runSARIF, "sarif", false, "Write build-audit.sarif in SARIF 2.1.0 format alongside build-audit.md")

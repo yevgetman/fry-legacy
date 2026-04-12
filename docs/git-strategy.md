@@ -1,13 +1,13 @@
 # Git Strategy
 
-Fry supports multiple **git strategies** for isolating build work. By default, the [triage gate](triage.md) auto-selects the strategy based on task complexity — complex tasks get a worktree, simpler tasks get a branch. On the first build in a directory where Fry has to create the git repository, Fry stays on the primary branch instead of creating a branch or worktree. You can override this with `--git-strategy`.
+Fry supports multiple **git strategies** for isolating build work. By default, Fry works directly on the current branch (`current` strategy). Use `--worktree` to isolate the build in a git worktree, or `--git-strategy` for fine-grained control.
 
 ## Strategies
 
 | Strategy | Description |
 |---|---|
-| `auto` | Triage auto-selects: COMPLEX -> worktree, SIMPLE/MODERATE -> branch. Fresh repos created by Fry for the first build use `current`. When no triage runs (epic already exists), defaults to `current` for backwards compatibility. |
-| `current` | Work directly on the current branch. No branch or worktree created. This is the previous default behavior. |
+| `auto` | Resolves to `current`. Equivalent to not passing `--git-strategy`. |
+| `current` | Work directly on the current branch. No branch or worktree created. This is the default. |
 | `branch` | Create a new git branch for the build. Switches to it before the first sprint. |
 | `worktree` | Create an isolated git worktree under `.fry-worktrees/`. Build runs entirely inside the worktree. |
 
@@ -15,19 +15,11 @@ Fry supports multiple **git strategies** for isolating build work. By default, t
 
 | Flag | Description |
 |---|---|
-| `--git-strategy <auto\|current\|branch\|worktree>` | Git isolation strategy (default: `auto`) |
+| `--worktree` | Run build in a git worktree (shorthand for `--git-strategy worktree`) |
+| `--git-strategy <auto\|current\|branch\|worktree>` | Git isolation strategy (default: `auto`, which resolves to `current`) |
 | `--branch-name <name>` | Explicit branch name. Overrides auto-generated name. Cannot be used with `--git-strategy current`. |
 
-## Auto-Resolution Rules
-
-The `auto` strategy resolves to a concrete strategy at runtime:
-
-1. **Triage runs** (no epic exists) -- the triage classifier determines complexity, then:
-   - COMPLEX -> `worktree`
-   - SIMPLE or MODERATE -> `branch`
-2. **Fresh repo created by Fry for this build** -- resolves to `current` so the first build runs directly on the primary branch.
-3. **No triage** (epic already exists, or `--continue`/`--resume`) -- defaults to `current` for backwards compatibility.
-4. **Explicit `--git-strategy`** -- always takes precedence over auto-resolution.
+`--worktree` and `--git-strategy` are mutually exclusive.
 
 ## Branch Names
 
@@ -36,29 +28,6 @@ Branch names follow the pattern `fry/<slug>` where `<slug>` is a lowercased, hyp
 - Auto-generated from the epic `@epic` name (e.g., `@epic My REST API` -> `fry/my-rest-api`)
 - Override with `--branch-name my-feature` to use an explicit name
 - If no epic name is available, falls back to `fry/build`
-
-## Triage Integration
-
-When triage runs, the classification display includes a **Git:** line showing the resolved strategy:
-
-```
-── Triage classification ───────────────────────────────────────
-Difficulty:  COMPLEX
-Effort:      high
-Git:         worktree
-Reason:      Multi-service architecture with database migrations.
-Action:      Full prepare pipeline (3-4 LLM calls)
-─────────────────────────────────────────────────────────────────
-Accept this classification? [Y/n/a] (a = adjust)
-```
-
-When adjusting (`a`), you can override the git strategy alongside difficulty and effort:
-
-```
-Difficulty [COMPLEX] (simple/moderate/complex, or Enter to keep):
-Effort [high] (fast/standard/high/max, or Enter to keep):
-Git strategy [worktree] (auto/current/branch/worktree, or Enter to keep):
-```
 
 ## Continue / Resume Behavior
 
@@ -112,14 +81,17 @@ If the branch already exists (and `--continue`/`--resume` is not set), Fry exits
 ## Examples
 
 ```bash
-# Auto strategy (default) — triage decides
+# Default — work directly on main/master
 fry --user-prompt "add a REST endpoint"
 
-# Force worktree for a complex task
+# Isolate in a worktree
+fry --worktree --user-prompt "build microservice architecture"
+
+# Same thing, explicit flag
 fry --git-strategy worktree --user-prompt "build microservice architecture"
 
-# Force current branch (previous behavior)
-fry --git-strategy current
+# Use a branch instead
+fry --git-strategy branch --user-prompt "add auth system"
 
 # Use a specific branch name
 fry --git-strategy branch --branch-name feature/auth-system
@@ -135,5 +107,5 @@ fry --resume --sprint 4
 
 - `--continue` / `--resume`: reads persisted strategy from `.fry/git-strategy.txt`. Ignores `--git-strategy` if set (uses persisted value).
 - `--dry-run`: strategy is resolved and displayed but no branch or worktree is created.
-- `--no-project-overview`: skips triage confirmation (including git strategy display), but auto-resolution still applies.
-- `--full-prepare`: bypasses triage but respects `--git-strategy`. When strategy is `auto` and `--full-prepare` is used, defaults to `current`.
+- `--no-project-overview`: skips triage confirmation (including git strategy display), but strategy resolution still applies.
+- `--full-prepare`: bypasses triage but respects `--git-strategy` / `--worktree`.

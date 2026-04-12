@@ -16,7 +16,6 @@ import (
 	"github.com/yevgetman/fry/internal/epic"
 	"github.com/yevgetman/fry/internal/git"
 	"github.com/yevgetman/fry/internal/sprint"
-	"github.com/yevgetman/fry/internal/triage"
 )
 
 func TestFormatAffectedSprints(t *testing.T) {
@@ -193,63 +192,36 @@ func TestResolveRunGitStrategy(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name                 string
-		requested            git.GitStrategy
-		triageDecision       *triage.TriageDecision
-		repoExistedBeforeRun bool
-		isFreshlyInitialized bool
-		want                 git.GitStrategy
+		name      string
+		requested git.GitStrategy
+		want      git.GitStrategy
 	}{
 		{
-			name:                 "explicit strategy is preserved",
-			requested:            git.StrategyWorktree,
-			repoExistedBeforeRun: false,
-			want:                 git.StrategyWorktree,
+			name:      "explicit worktree is preserved",
+			requested: git.StrategyWorktree,
+			want:      git.StrategyWorktree,
 		},
 		{
-			name:                 "first build in newly initialized repo stays current",
-			requested:            git.StrategyAuto,
-			repoExistedBeforeRun: false,
-			triageDecision:       &triage.TriageDecision{Complexity: triage.ComplexityComplex},
-			want:                 git.StrategyCurrent,
+			name:      "explicit branch is preserved",
+			requested: git.StrategyBranch,
+			want:      git.StrategyBranch,
 		},
 		{
-			name:                 "fry-init repo stays current even for complex triage",
-			requested:            git.StrategyAuto,
-			repoExistedBeforeRun: true,
-			isFreshlyInitialized: true,
-			triageDecision:       &triage.TriageDecision{Complexity: triage.ComplexityComplex},
-			want:                 git.StrategyCurrent,
+			name:      "explicit current is preserved",
+			requested: git.StrategyCurrent,
+			want:      git.StrategyCurrent,
 		},
 		{
-			name:                 "existing repo uses triage complexity",
-			requested:            git.StrategyAuto,
-			repoExistedBeforeRun: true,
-			triageDecision:       &triage.TriageDecision{Complexity: triage.ComplexityComplex},
-			want:                 git.StrategyWorktree,
-		},
-		{
-			name:                 "triage override wins in existing repo",
-			requested:            git.StrategyAuto,
-			repoExistedBeforeRun: true,
-			triageDecision: &triage.TriageDecision{
-				Complexity:          triage.ComplexityModerate,
-				GitStrategyOverride: "current",
-			},
-			want: git.StrategyCurrent,
-		},
-		{
-			name:                 "no triage defaults current",
-			requested:            git.StrategyAuto,
-			repoExistedBeforeRun: true,
-			want:                 git.StrategyCurrent,
+			name:      "auto resolves to current",
+			requested: git.StrategyAuto,
+			want:      git.StrategyCurrent,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := resolveRunGitStrategy(tt.requested, tt.triageDecision, tt.repoExistedBeforeRun, tt.isFreshlyInitialized)
+			got := resolveRunGitStrategy(tt.requested)
 			assert.Equal(t, tt.want, got)
 		})
 	}

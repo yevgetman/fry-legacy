@@ -119,7 +119,8 @@ fry run --sprint 3         # Start from sprint 3 (uses .fry/epic.md)
 | `--simple-continue` | Resume from the first incomplete sprint without LLM analysis. Scans sprint completion markers in the build state and resumes from the first sprint without a marker. Lightweight alternative to `--continue` — no LLM call, no cost. Cannot be combined with `--continue`, `--resume`, or `--sprint`. |
 | `--full-prepare` | Skip triage and run the full prepare pipeline when no epic exists. Equivalent to the pre-triage behavior. See [Triage](triage.md). |
 | `--triage-only` | Run the triage classifier and exit without generating any artifacts (no epic, sanity checks, or AGENTS.md). Prints the classification result. Cannot be combined with `--full-prepare`, `--continue`, `--resume`, or `--simple-continue`. See [Triage](triage.md). |
-| `--git-strategy <auto\|current\|branch\|worktree>` | Git isolation strategy (default: `auto`). `auto` lets triage decide (complex -> worktree, simple/moderate -> branch). `current` works on the current branch (previous behavior). See [Git Strategy](git-strategy.md). |
+| `--worktree` | Run build in a git worktree, isolating changes from the main branch. See [Git Strategy](git-strategy.md). |
+| `--git-strategy <auto\|current\|branch\|worktree>` | Git isolation strategy (default: `auto`, resolves to `current`). See [Git Strategy](git-strategy.md). |
 | `--branch-name <name>` | Explicit branch name for `branch` or `worktree` strategies. Overrides the auto-generated `fry/<slug>` name. |
 | `--always-verify` | Force sanity checks, alignment, and audit to run regardless of effort level or triage complexity. Generates heuristic sanity checks if none exist. Useful for CI/CD and automated builds. |
 | `--sarif` | Write `build-audit.sarif` in SARIF 2.1.0 format alongside `build-audit.md`. Only written when the build audit runs. See [Build Audit](build-audit.md). |
@@ -163,9 +164,8 @@ fry --user-prompt "build a todo app" --engine claude  # Start from just a prompt
 fry --user-prompt-file ./prompt.txt --engine claude   # Load prompt from a file
 fry -y --user-prompt "add rate limiting"              # Fully automated: no interactive prompts
 fry --no-project-overview                             # Skip triage confirmation and project overview
-fry --git-strategy worktree                       # Force worktree isolation
+fry --worktree                                    # Isolate build in a git worktree
 fry --git-strategy branch --branch-name feat/auth # Branch with explicit name
-fry --git-strategy current                        # Work on current branch (previous behavior)
 fry --always-verify                               # Force sanity checks+alignment+audit on all tasks
 fry --model opus[1m] --effort standard             # Standard sprint count with frontier model
 fry --no-observer                                 # Disable the observer metacognitive layer
