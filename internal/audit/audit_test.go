@@ -110,6 +110,7 @@ const cleanAudit = "## Summary\nAll good.\n\n## Findings\nNone.\n\n## Verdict\nP
 const passWithSeverityRubric = "## Summary\nAll checks resolved.\n\n## Findings\nNone.\n\n## Severity Reference\n- **Severity:** CRITICAL | HIGH | MODERATE | LOW\n\n## Verdict\nPASS\n"
 const reviewStyleHighFinding = "**Findings**\n\n1. High: Missing error handling in booking cancellation path.\n"
 const bracketedSeverityFindings = "### Issues Found\n\n---\n\n#### **[HIGH] `encodeURIComponent` regression breaks Teams meeting deletion — `teams.service.ts:392`**\n\nThe fix changed correct OData escaping to encodeURIComponent which breaks the filter.\n\n---\n\n#### **[MODERATE] E2E smoke tests don't verify unauthenticated access**\n\nMockAuthGuard always returns true so the @Public() bypass is never tested.\n\n---\n\n#### **[LOW] Worker idempotency type fragility**\n\nBullMQ RepeatableJob.every comparison uses string equality.\n"
+const bulletListBracketedFindings = "**Findings**\n\n- [high] Trial users are incorrectly blocked from all webhook functionality.\n\n- [high] The retry pipeline is one retry short versus the sprint requirement.\n\n- [medium] Booking webhook coverage is still incomplete.\n"
 const diffStyleHighFinding = "codex\nI wrote the audit to `.fry/sprint-audit.txt`.\ndiff --git a/.fry/sprint-audit.txt b/.fry/sprint-audit.txt\nnew file mode 100644\nindex 0000000..1111111\n--- /dev/null\n+++ b/.fry/sprint-audit.txt\n@@ -0,0 +1,8 @@\n+## Summary\n+Recovered from diff.\n+\n+## Findings\n+- **Location:** src/api.go:20\n+- **Description:** Missing error handling\n+- **Severity:** HIGH\n+\n+## Verdict\n+FAIL\n"
 const resolvedVerifySummary = "All listed issues are marked `RESOLVED`."
 const diffStyleResolvedVerifyOutput = "codex\nVerified the listed issues and wrote the results.\ndiff --git a/.fry/sprint-audit.txt b/.fry/sprint-audit.txt\nnew file mode 100644\nindex 0000000..2222222\n--- /dev/null\n+++ b/.fry/sprint-audit.txt\n@@ -0,0 +1,5 @@\n+- **Issue:** 1\n+- **Status:** RESOLVED\n+\n+- **Issue:** 2\n+- **Status:** RESOLVED\n"
@@ -1875,6 +1876,27 @@ func TestParseBracketedSeverityFindingsVariants(t *testing.T) {
 			desc:     "Type assertion",
 			loc:      "config.ts:99",
 		},
+		{
+			name:     "bullet list prefix",
+			input:    "- [HIGH] Trial users blocked from webhooks",
+			severity: "HIGH",
+			desc:     "Trial users blocked from webhooks",
+			loc:      "",
+		},
+		{
+			name:     "asterisk list prefix",
+			input:    "* [MODERATE] Retry count off by one",
+			severity: "MODERATE",
+			desc:     "Retry count off by one",
+			loc:      "",
+		},
+		{
+			name:     "plus list prefix with location",
+			input:    "+ [CRITICAL] SQL injection — src/db.go:12",
+			severity: "CRITICAL",
+			desc:     "SQL injection",
+			loc:      "src/db.go:12",
+		},
 	}
 
 	for _, tt := range tests {
@@ -1896,6 +1918,33 @@ func TestRecoverAuditReportFromBracketedSeverity(t *testing.T) {
 	require.NotEmpty(t, content)
 	assert.Equal(t, "bracketed-severity assistant response", source)
 	assert.Contains(t, content, "encodeURIComponent")
+	assert.Contains(t, content, "HIGH")
+	assert.Contains(t, content, "FAIL")
+}
+
+func TestParseBracketedSeverityBulletListFindings(t *testing.T) {
+	t.Parallel()
+
+	findings := parseBracketedSeverityFindings(bulletListBracketedFindings)
+	require.Len(t, findings, 3)
+
+	assert.Equal(t, "HIGH", findings[0].Severity)
+	assert.Contains(t, findings[0].Description, "Trial users")
+
+	assert.Equal(t, "HIGH", findings[1].Severity)
+	assert.Contains(t, findings[1].Description, "retry pipeline")
+
+	assert.Equal(t, "MODERATE", findings[2].Severity)
+	assert.Contains(t, findings[2].Description, "Booking webhook coverage")
+}
+
+func TestRecoverAuditReportFromBulletListBracketedSeverity(t *testing.T) {
+	t.Parallel()
+
+	content, source := recoverAuditReport(config.SprintAuditFile, "", bulletListBracketedFindings, "")
+	require.NotEmpty(t, content)
+	assert.Equal(t, "bracketed-severity assistant response", source)
+	assert.Contains(t, content, "Trial users")
 	assert.Contains(t, content, "HIGH")
 	assert.Contains(t, content, "FAIL")
 }
