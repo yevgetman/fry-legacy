@@ -297,7 +297,17 @@ func RunAuditLoop(ctx context.Context, opts AuditOpts) (*AuditResult, error) {
 			auditLogPath,
 		)
 		if err != nil {
-			return nil, err
+			// All regex-based recovery failed. Try LLM extraction as last resort.
+			recovered, llmErr := recoverAuditReportWithLLM(ctx, opts.Engine, string(opts.Epic.EffortLevel), opts.ProjectDir, auditOutput, auditLogPath)
+			if llmErr != nil {
+				frylog.Log("  AUDIT: LLM recovery also failed: %v", llmErr)
+				return nil, err // return original error
+			}
+			if writeErr := writePromptFile(auditFilePath, recovered); writeErr != nil {
+				return nil, fmt.Errorf("run audit loop: write LLM-recovered audit: %w", writeErr)
+			}
+			content = []byte(recovered)
+			err = nil
 		}
 		_ = os.Remove(auditFilePath)
 		if err := checkStopRequest(opts.ProjectDir, "sprint_audit", fmt.Sprintf("after audit cycle %d", cycle)); err != nil {
@@ -2251,7 +2261,17 @@ func runVerifyPass(
 		len(unresolved),
 	)
 	if verifyErr != nil {
-		return verifyErr
+		// All regex-based recovery failed. Try LLM extraction as last resort.
+		recovered, llmErr := recoverVerificationWithLLM(ctx, opts.Engine, string(opts.Epic.EffortLevel), opts.ProjectDir, verifyOutput, verifyLogPath, len(unresolved))
+		if llmErr != nil {
+			frylog.Log("  AUDIT: LLM verification recovery also failed: %v", llmErr)
+			return verifyErr // return original error
+		}
+		if writeErr := writePromptFile(auditFilePath, recovered); writeErr != nil {
+			return fmt.Errorf("run audit loop: write LLM-recovered verification: %w", writeErr)
+		}
+		verifyContent = []byte(recovered)
+		verifyErr = nil
 	}
 	_ = os.Remove(auditFilePath)
 	if err := checkStopRequest(opts.ProjectDir, "sprint_audit", fmt.Sprintf("after audit verify %d in cycle %d", fixIter, cycle)); err != nil {
