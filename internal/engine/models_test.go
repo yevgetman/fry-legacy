@@ -174,10 +174,10 @@ func TestTierForSession(t *testing.T) {
 		{"auditfix-codex-fast", "codex", "fast", SessionAuditFix, TierStandard},
 		{"auditfix-codex-high", "codex", "high", SessionAuditFix, TierFrontier},
 
-		// Audit (Claude): Standard for fast/standard/high, Frontier for max
+		// Audit (Claude): Standard for fast/standard, Frontier for high/max
 		{"audit-claude-fast", "claude", "fast", SessionAudit, TierStandard},
 		{"audit-claude-standard", "claude", "standard", SessionAudit, TierStandard},
-		{"audit-claude-high", "claude", "high", SessionAudit, TierStandard},
+		{"audit-claude-high", "claude", "high", SessionAudit, TierFrontier},
 		{"audit-claude-max", "claude", "max", SessionAudit, TierFrontier},
 
 		// Audit (Codex): Mini for fast, Standard for standard, Frontier for high/max
@@ -187,13 +187,13 @@ func TestTierForSession(t *testing.T) {
 		{"audit-codex-max", "codex", "max", SessionAudit, TierFrontier},
 
 		// AuditVerify: same as Audit
-		{"auditverify-claude-high", "claude", "high", SessionAuditVerify, TierStandard},
+		{"auditverify-claude-high", "claude", "high", SessionAuditVerify, TierFrontier},
 		{"auditverify-claude-max", "claude", "max", SessionAuditVerify, TierFrontier},
 		{"auditverify-codex-fast", "codex", "fast", SessionAuditVerify, TierMini},
 		{"auditverify-codex-high", "codex", "high", SessionAuditVerify, TierFrontier},
 
 		// BuildAudit: same as Audit
-		{"buildaudit-claude-high", "claude", "high", SessionBuildAudit, TierStandard},
+		{"buildaudit-claude-high", "claude", "high", SessionBuildAudit, TierFrontier},
 		{"buildaudit-claude-max", "claude", "max", SessionBuildAudit, TierFrontier},
 		{"buildaudit-codex-fast", "codex", "fast", SessionBuildAudit, TierMini},
 		{"buildaudit-codex-max", "codex", "max", SessionBuildAudit, TierFrontier},

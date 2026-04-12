@@ -283,8 +283,9 @@ func auditTier(engineName, effort string) ModelTier {
 			return TierFrontier
 		}
 	}
-	// claude: standard for all except max
-	if effort == "max" {
+	// claude: frontier at high/max so the reviewer is at least as capable
+	// as the sprint builder; standard otherwise
+	if effort == "high" || effort == "max" {
 		return TierFrontier
 	}
 	return TierStandard
