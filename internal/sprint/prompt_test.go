@@ -167,6 +167,54 @@ func TestAssemblePrompt_WritingMode_PlanReference(t *testing.T) {
 	assert.NotContains(t, prompt, "project architecture")
 }
 
+func TestAssemblePrompt_SelfReviewChecklist_CodeMode(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	prompt, err := AssemblePrompt(PromptOpts{
+		ProjectDir:   dir,
+		SprintPrompt: "Build the thing.",
+		EffortLevel:  epic.EffortHigh,
+	})
+	require.NoError(t, err)
+	assert.Contains(t, prompt, "Self-review checklist")
+	assert.Contains(t, prompt, "return value is used")
+	assert.Contains(t, prompt, "consistent validation")
+	assert.Contains(t, prompt, "wrapped in a transaction")
+	assert.Contains(t, prompt, "entity's timezone")
+	assert.Contains(t, prompt, "unused imports")
+	assert.Contains(t, prompt, "Comments match")
+}
+
+func TestAssemblePrompt_SelfReviewChecklist_WritingMode(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	prompt, err := AssemblePrompt(PromptOpts{
+		ProjectDir:   dir,
+		SprintPrompt: "Write the chapter.",
+		EffortLevel:  epic.EffortHigh,
+		Mode:         "writing",
+	})
+	require.NoError(t, err)
+	assert.NotContains(t, prompt, "Self-review checklist")
+	assert.NotContains(t, prompt, "wrapped in a transaction")
+}
+
+func TestAssemblePrompt_SelfReviewChecklist_FastEffort(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	prompt, err := AssemblePrompt(PromptOpts{
+		ProjectDir:   dir,
+		SprintPrompt: "Build fast.",
+		EffortLevel:  epic.EffortFast,
+	})
+	require.NoError(t, err)
+	// Fast effort skips the quality directive entirely, so no checklist.
+	assert.NotContains(t, prompt, "Self-review checklist")
+}
+
 func TestAssemblePrompt_CodebaseContext_Present(t *testing.T) {
 	t.Parallel()
 

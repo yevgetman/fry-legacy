@@ -190,7 +190,18 @@ func AssemblePrompt(opts PromptOpts) (string, error) {
 			b.WriteString("# - Before declaring completion, run the project's build and test commands\n")
 			b.WriteString("#   (e.g., go build ./..., go test ./..., make build, npm test) and fix failures\n")
 		}
-		b.WriteString("# - Review your own diff for mistakes, missing logic, and incomplete work\n\n")
+		b.WriteString("# - Review your own diff for mistakes, missing logic, and incomplete work\n")
+		if opts.Mode != "writing" {
+			b.WriteString("#\n")
+			b.WriteString("# Self-review checklist (re-read your code and verify each item):\n")
+			b.WriteString("#   □ Every function call's return value is used in a conditional or explicitly discarded\n")
+			b.WriteString("#   □ Every group of analogous fields has consistent validation\n")
+			b.WriteString("#   □ Sequential writes that must be atomic are wrapped in a transaction\n")
+			b.WriteString("#   □ Date/time derivations use the entity's timezone, not UTC\n")
+			b.WriteString("#   □ No unused imports left behind from refactoring\n")
+			b.WriteString("#   □ Comments match the actual code behavior\n")
+		}
+		b.WriteString("\n")
 	}
 
 	// Layer 2: Strategic plan reference
