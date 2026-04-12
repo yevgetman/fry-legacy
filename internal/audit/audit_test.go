@@ -111,6 +111,7 @@ const passWithSeverityRubric = "## Summary\nAll checks resolved.\n\n## Findings\
 const reviewStyleHighFinding = "**Findings**\n\n1. High: Missing error handling in booking cancellation path.\n"
 const bracketedSeverityFindings = "### Issues Found\n\n---\n\n#### **[HIGH] `encodeURIComponent` regression breaks Teams meeting deletion — `teams.service.ts:392`**\n\nThe fix changed correct OData escaping to encodeURIComponent which breaks the filter.\n\n---\n\n#### **[MODERATE] E2E smoke tests don't verify unauthenticated access**\n\nMockAuthGuard always returns true so the @Public() bypass is never tested.\n\n---\n\n#### **[LOW] Worker idempotency type fragility**\n\nBullMQ RepeatableJob.every comparison uses string equality.\n"
 const bulletListBracketedFindings = "**Findings**\n\n- [high] Trial users are incorrectly blocked from all webhook functionality.\n\n- [high] The retry pipeline is one retry short versus the sprint requirement.\n\n- [medium] Booking webhook coverage is still incomplete.\n"
+const numberedListBracketedFindings = "1. [HIGH] The soft-delete gone paths only render 410 copy in the page body but do not return HTTP 410.\n\n2. [HIGH] BrandHeader performs a server-side fetch against whatever URL is stored on the brand, which is an SSRF vector.\n"
 const diffStyleHighFinding = "codex\nI wrote the audit to `.fry/sprint-audit.txt`.\ndiff --git a/.fry/sprint-audit.txt b/.fry/sprint-audit.txt\nnew file mode 100644\nindex 0000000..1111111\n--- /dev/null\n+++ b/.fry/sprint-audit.txt\n@@ -0,0 +1,8 @@\n+## Summary\n+Recovered from diff.\n+\n+## Findings\n+- **Location:** src/api.go:20\n+- **Description:** Missing error handling\n+- **Severity:** HIGH\n+\n+## Verdict\n+FAIL\n"
 const resolvedVerifySummary = "All listed issues are marked `RESOLVED`."
 const diffStyleResolvedVerifyOutput = "codex\nVerified the listed issues and wrote the results.\ndiff --git a/.fry/sprint-audit.txt b/.fry/sprint-audit.txt\nnew file mode 100644\nindex 0000000..2222222\n--- /dev/null\n+++ b/.fry/sprint-audit.txt\n@@ -0,0 +1,5 @@\n+- **Issue:** 1\n+- **Status:** RESOLVED\n+\n+- **Issue:** 2\n+- **Status:** RESOLVED\n"
@@ -1897,6 +1898,20 @@ func TestParseBracketedSeverityFindingsVariants(t *testing.T) {
 			desc:     "SQL injection",
 			loc:      "src/db.go:12",
 		},
+		{
+			name:     "numbered list prefix",
+			input:    "1. [HIGH] Soft-delete paths do not return HTTP 410",
+			severity: "HIGH",
+			desc:     "Soft-delete paths do not return HTTP 410",
+			loc:      "",
+		},
+		{
+			name:     "double digit numbered list",
+			input:    "12. [MODERATE] Missing CSRF token — src/form.tsx:30",
+			severity: "MODERATE",
+			desc:     "Missing CSRF token",
+			loc:      "src/form.tsx:30",
+		},
 	}
 
 	for _, tt := range tests {
@@ -1945,6 +1960,30 @@ func TestRecoverAuditReportFromBulletListBracketedSeverity(t *testing.T) {
 	require.NotEmpty(t, content)
 	assert.Equal(t, "bracketed-severity assistant response", source)
 	assert.Contains(t, content, "Trial users")
+	assert.Contains(t, content, "HIGH")
+	assert.Contains(t, content, "FAIL")
+}
+
+func TestParseBracketedSeverityNumberedListFindings(t *testing.T) {
+	t.Parallel()
+
+	findings := parseBracketedSeverityFindings(numberedListBracketedFindings)
+	require.Len(t, findings, 2)
+
+	assert.Equal(t, "HIGH", findings[0].Severity)
+	assert.Contains(t, findings[0].Description, "soft-delete")
+
+	assert.Equal(t, "HIGH", findings[1].Severity)
+	assert.Contains(t, findings[1].Description, "BrandHeader")
+}
+
+func TestRecoverAuditReportFromNumberedListBracketedSeverity(t *testing.T) {
+	t.Parallel()
+
+	content, source := recoverAuditReport(config.SprintAuditFile, "", numberedListBracketedFindings, "")
+	require.NotEmpty(t, content)
+	assert.Equal(t, "bracketed-severity assistant response", source)
+	assert.Contains(t, content, "soft-delete")
 	assert.Contains(t, content, "HIGH")
 	assert.Contains(t, content, "FAIL")
 }

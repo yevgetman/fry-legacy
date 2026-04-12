@@ -15,7 +15,7 @@ import (
 
 var (
 	reviewFindingHeaderRe     = regexp.MustCompile(`(?im)^\d+\.\s+(CRITICAL|HIGH|MEDIUM|MODERATE|LOW):\s+`)
-	bracketedSeverityHeaderRe = regexp.MustCompile(`(?im)^(?:[-*+]\s+)?(?:#{1,6}\s+)?\*{0,2}\[(CRITICAL|HIGH|MEDIUM|MODERATE|LOW)\]\*{0,2}\s+(.+?)(?:\s*\*{0,2})$`)
+	bracketedSeverityHeaderRe = regexp.MustCompile(`(?im)^(?:[-*+]\s+|\d+\.\s+)?(?:#{1,6}\s+)?\*{0,2}\[(CRITICAL|HIGH|MEDIUM|MODERATE|LOW)\]\*{0,2}\s+(.+?)(?:\s*\*{0,2})$`)
 	markdownLinkRe            = regexp.MustCompile(`\[([^\]]+)\]\([^)]+\)`)
 	markdownLinkTargetRe      = regexp.MustCompile(`\[[^\]]+\]\((/[^)]+)\)`)
 	explicitPassRe            = regexp.MustCompile(`(?is)\bverdict\b.{0,40}\bpass\b|\bno findings\b|\bno issues (?:were )?found\b|\bno issues remain\b`)
