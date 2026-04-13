@@ -112,44 +112,67 @@ func RunReplan(ctx context.Context, opts ReplanOpts) error {
 		runOpts.Stdout = stdout
 		runOpts.Stderr = stdout
 	}
-	beforeSize := textutil.FileSize(epicPath)
-	output, _, runErr := opts.Engine.Run(ctx,
-		"Read and execute ALL instructions in .fry/replan-prompt.md. Output ONLY the complete updated epic.md file content. No explanation, no code fences.",
-		runOpts,
-	)
-	if runErr != nil && strings.TrimSpace(output) == "" {
-		return fmt.Errorf("run replan: replanner agent failed: %w", runErr)
-	}
-	if runErr != nil {
-		frylog.Log("WARNING: replanner agent exited with error (non-fatal): %v", runErr)
-	}
-
-	// Use size-based artifact detection (same pattern as prepare.go).
-	// If the engine changed the file size, its on-disk content is authoritative.
-	// Otherwise ResolveArtifact writes the captured output (stripped of fences).
-	if err := textutil.ResolveArtifact(epicPath, beforeSize, output); err != nil {
-		return fmt.Errorf("run replan: resolve artifact: %w", err)
-	}
-	data, err := os.ReadFile(epicPath)
-	if err != nil {
-		return fmt.Errorf("run replan: read updated epic: %w", err)
-	}
-	updatedContent := string(data)
-	if strings.TrimSpace(updatedContent) == "" {
-		return fmt.Errorf("run replan: replanner produced empty output")
-	}
-
 	originalParsed, err := parseEpicContent(originalContent)
 	if err != nil {
 		return fmt.Errorf("run replan: parse original epic: %w", err)
 	}
-	updatedParsed, err := parseEpicContent(updatedContent)
-	if err != nil {
-		return fmt.Errorf("run replan: parse updated epic: %w", err)
-	}
 
-	if err := validateReplanWithRaw(originalParsed, updatedParsed, originalContent, updatedContent, opts.CompletedSprint, opts.MaxScope); err != nil {
-		return err
+	const maxReplanRetries = 2
+	agentPrompt := "Read and execute ALL instructions in .fry/replan-prompt.md. Output ONLY the complete updated epic.md file content. No explanation, no code fences."
+
+	var updatedContent string
+	for attempt := 0; ; attempt++ {
+		beforeSize := textutil.FileSize(epicPath)
+		output, _, runErr := opts.Engine.Run(ctx, agentPrompt, runOpts)
+		if runErr != nil && strings.TrimSpace(output) == "" {
+			_ = os.WriteFile(epicPath, originalContentBytes, 0o644)
+			return fmt.Errorf("run replan: replanner agent failed: %w", runErr)
+		}
+		if runErr != nil {
+			frylog.Log("WARNING: replanner agent exited with error (non-fatal): %v", runErr)
+		}
+
+		if err := textutil.ResolveArtifact(epicPath, beforeSize, output); err != nil {
+			_ = os.WriteFile(epicPath, originalContentBytes, 0o644)
+			return fmt.Errorf("run replan: resolve artifact: %w", err)
+		}
+		data, err := os.ReadFile(epicPath)
+		if err != nil {
+			return fmt.Errorf("run replan: read updated epic: %w", err)
+		}
+		updatedContent = string(data)
+		if strings.TrimSpace(updatedContent) == "" {
+			_ = os.WriteFile(epicPath, originalContentBytes, 0o644)
+			return fmt.Errorf("run replan: replanner produced empty output")
+		}
+
+		updatedParsed, err := parseEpicContent(updatedContent)
+		if err != nil {
+			if attempt >= maxReplanRetries {
+				_ = os.WriteFile(epicPath, originalContentBytes, 0o644)
+				return fmt.Errorf("run replan: parse updated epic after %d attempts: %w", attempt+1, err)
+			}
+			_ = os.WriteFile(epicPath, originalContentBytes, 0o644)
+			frylog.Log("  Replan validation failed (attempt %d/%d): %v — retrying", attempt+1, maxReplanRetries+1, err)
+			agentPrompt = buildReplanRetryPrompt(err, opts.CompletedSprint)
+			continue
+		}
+
+		validationErr := validateReplanWithRaw(originalParsed, updatedParsed, originalContent, updatedContent, opts.CompletedSprint, opts.MaxScope)
+		if validationErr == nil {
+			break
+		}
+
+		if err := os.WriteFile(epicPath, originalContentBytes, 0o644); err != nil {
+			return fmt.Errorf("run replan: restore epic: %w", err)
+		}
+
+		if attempt >= maxReplanRetries {
+			return fmt.Errorf("run replan: validation failed after %d attempts: %w", attempt+1, validationErr)
+		}
+
+		frylog.Log("  Replan validation failed (attempt %d/%d): %v — retrying", attempt+1, maxReplanRetries+1, validationErr)
+		agentPrompt = buildReplanRetryPrompt(validationErr, opts.CompletedSprint)
 	}
 
 	backupDir := filepath.Join(opts.ProjectDir, config.BuildLogsDir)
@@ -166,6 +189,15 @@ func RunReplan(ctx context.Context, opts ReplanOpts) error {
 
 	frylog.Log("  Epic updated successfully.")
 	return nil
+}
+
+func buildReplanRetryPrompt(validationErr error, completedSprint int) string {
+	return fmt.Sprintf(
+		"Read and execute ALL instructions in .fry/replan-prompt.md. Output ONLY the complete updated epic.md file content. No explanation, no code fences.\n\n"+
+			"CRITICAL: Your previous attempt was REJECTED because: %s\n"+
+			"You MUST copy sprints 1 through %d EXACTLY as they appear in the original file — character for character, with no modifications whatsoever.",
+		validationErr, completedSprint,
+	)
 }
 
 func ValidateReplan(original, updated *epic.Epic, completedSprint, maxScope int) error {

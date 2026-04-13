@@ -703,3 +703,127 @@ func TestParseSprintNumber(t *testing.T) {
 	assert.Equal(t, 0, parseSprintNumber("not a sprint"))
 	assert.Equal(t, 0, parseSprintNumber("@sprint"))
 }
+
+// --- Replan retry tests ---
+
+// stubReplanEngineMulti returns successive outputs on each call.
+type stubReplanEngineMulti struct {
+	outputs []string
+	prompts []string
+	call    int
+}
+
+func (s *stubReplanEngineMulti) Run(_ context.Context, prompt string, opts engine.RunOpts) (string, int, error) {
+	s.prompts = append(s.prompts, prompt)
+	idx := s.call
+	if idx >= len(s.outputs) {
+		idx = len(s.outputs) - 1
+	}
+	out := s.outputs[idx]
+	s.call++
+	if opts.Stdout != nil {
+		_, _ = opts.Stdout.Write([]byte(out))
+	}
+	return out, 0, nil
+}
+
+func (s *stubReplanEngineMulti) Name() string {
+	return "stub"
+}
+
+func TestRunReplan_RetryOnCompletedSprintModification(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	epicContent := "@epic Demo\n@review_between_sprints\n@review_engine claude\n" +
+		"@sprint 1\n@name One\n@max_iterations 3\n@promise ONE\n@prompt\nFirst prompt.\n" +
+		"@sprint 2\n@name Two\n@max_iterations 3\n@promise TWO\n@prompt\nSecond prompt.\n"
+
+	epicPath := filepath.Join(projectDir, config.FryDir, "epic.md")
+	require.NoError(t, os.MkdirAll(filepath.Dir(epicPath), 0o755))
+	require.NoError(t, os.WriteFile(epicPath, []byte(epicContent), 0o644))
+
+	planPath := filepath.Join(projectDir, config.PlanFile)
+	require.NoError(t, os.MkdirAll(filepath.Dir(planPath), 0o755))
+	require.NoError(t, os.WriteFile(planPath, []byte("Plan content\n"), 0o644))
+
+	// First attempt: modify completed sprint 1 (invalid).
+	// Second attempt: only modify sprint 2 (valid).
+	badOutput := strings.Replace(epicContent, "First prompt.", "First prompt CHANGED.", 1)
+	badOutput = strings.Replace(badOutput, "Second prompt.", "Second prompt updated.", 1)
+	goodOutput := strings.Replace(epicContent, "Second prompt.", "Second prompt updated.", 1)
+
+	eng := &stubReplanEngineMulti{outputs: []string{badOutput, goodOutput}}
+
+	err := RunReplan(context.Background(), ReplanOpts{
+		ProjectDir: projectDir,
+		EpicPath:   epicPath,
+		DeviationSpec: &DeviationSpec{
+			Trigger:         "Test trigger",
+			AffectedSprints: []int{2},
+			RiskAssessment:  "Low",
+			RawText:         "Test deviation",
+		},
+		CompletedSprint: 1,
+		MaxScope:        2,
+		Engine:          eng,
+	})
+	require.NoError(t, err)
+
+	// Verify the final epic has the good output.
+	updated, err := os.ReadFile(epicPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(updated), "Second prompt updated.")
+	assert.Contains(t, string(updated), "First prompt.")
+	assert.NotContains(t, string(updated), "First prompt CHANGED.")
+
+	// Verify engine was called twice and retry prompt includes error feedback.
+	require.Len(t, eng.prompts, 2)
+	assert.Contains(t, eng.prompts[1], "CRITICAL")
+	assert.Contains(t, eng.prompts[1], "REJECTED")
+}
+
+func TestRunReplan_ExhaustedRetriesRestoresEpic(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	epicContent := "@epic Demo\n@review_between_sprints\n@review_engine claude\n" +
+		"@sprint 1\n@name One\n@max_iterations 3\n@promise ONE\n@prompt\nFirst prompt.\n" +
+		"@sprint 2\n@name Two\n@max_iterations 3\n@promise TWO\n@prompt\nSecond prompt.\n"
+
+	epicPath := filepath.Join(projectDir, config.FryDir, "epic.md")
+	require.NoError(t, os.MkdirAll(filepath.Dir(epicPath), 0o755))
+	require.NoError(t, os.WriteFile(epicPath, []byte(epicContent), 0o644))
+
+	planPath := filepath.Join(projectDir, config.PlanFile)
+	require.NoError(t, os.MkdirAll(filepath.Dir(planPath), 0o755))
+	require.NoError(t, os.WriteFile(planPath, []byte("Plan content\n"), 0o644))
+
+	// All attempts modify the completed sprint — always invalid.
+	badOutput := strings.Replace(epicContent, "First prompt.", "First prompt CHANGED.", 1)
+	eng := &stubReplanEngineMulti{outputs: []string{badOutput, badOutput, badOutput}}
+
+	err := RunReplan(context.Background(), ReplanOpts{
+		ProjectDir: projectDir,
+		EpicPath:   epicPath,
+		DeviationSpec: &DeviationSpec{
+			Trigger:         "Test trigger",
+			AffectedSprints: []int{2},
+			RiskAssessment:  "Low",
+			RawText:         "Test deviation",
+		},
+		CompletedSprint: 1,
+		MaxScope:        2,
+		Engine:          eng,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "validation failed after 3 attempts")
+
+	// Verify the epic was restored to its original content.
+	restored, err := os.ReadFile(epicPath)
+	require.NoError(t, err)
+	assert.Equal(t, epicContent, string(restored))
+
+	// Verify engine was called 3 times (initial + 2 retries).
+	assert.Len(t, eng.prompts, 3)
+}
