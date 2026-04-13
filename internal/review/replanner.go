@@ -146,6 +146,13 @@ func RunReplan(ctx context.Context, opts ReplanOpts) error {
 			return fmt.Errorf("run replan: replanner produced empty output")
 		}
 
+		// Programmatically preserve completed sprint prompts. LLMs frequently
+		// drift on verbatim copy even when instructed not to modify them.
+		updatedContent = preserveCompletedSprints(originalContent, updatedContent, opts.CompletedSprint)
+		if err := os.WriteFile(epicPath, []byte(updatedContent), 0o644); err != nil {
+			return fmt.Errorf("run replan: write corrected epic: %w", err)
+		}
+
 		updatedParsed, err := parseEpicContent(updatedContent)
 		if err != nil {
 			if attempt >= maxReplanRetries {
@@ -198,6 +205,73 @@ func buildReplanRetryPrompt(validationErr error, completedSprint int) string {
 			"You MUST copy sprints 1 through %d EXACTLY as they appear in the original file — character for character, with no modifications whatsoever.",
 		validationErr, completedSprint,
 	)
+}
+
+// preserveCompletedSprints replaces the @prompt blocks of completed sprints
+// in updatedContent with their originals, correcting LLM drift without
+// requiring the LLM to copy completed sprints perfectly.
+func preserveCompletedSprints(originalContent, updatedContent string, completedSprint int) string {
+	result := updatedContent
+	for sprintNum := 1; sprintNum <= completedSprint; sprintNum++ {
+		origPrompt := ExtractSprintPrompt(originalContent, sprintNum)
+		if origPrompt == "" {
+			continue
+		}
+		curPrompt := ExtractSprintPrompt(result, sprintNum)
+		if curPrompt == origPrompt {
+			continue
+		}
+		result = replacePromptBlock(result, sprintNum, origPrompt)
+		frylog.Log("  Replan: restored completed sprint %d prompt (LLM drift corrected)", sprintNum)
+	}
+	return result
+}
+
+// replacePromptBlock finds sprint N's @prompt block in content and replaces
+// the prompt body with newBody.
+func replacePromptBlock(content string, sprintNum int, newBody string) string {
+	lines := strings.Split(content, "\n")
+	var out []string
+	var current int
+	skipping := false
+
+	for _, line := range lines {
+		trimmed := strings.TrimRight(line, " \t\r")
+
+		if strings.HasPrefix(trimmed, "@sprint ") {
+			if skipping {
+				out = append(out, strings.Split(newBody, "\n")...)
+				skipping = false
+			}
+			current = parseSprintNumber(trimmed)
+			out = append(out, line)
+			continue
+		}
+
+		if current == sprintNum && trimmed == "@prompt" {
+			out = append(out, line)
+			skipping = true
+			continue
+		}
+
+		if skipping {
+			if trimmed == "@end" {
+				out = append(out, strings.Split(newBody, "\n")...)
+				skipping = false
+				out = append(out, line)
+				continue
+			}
+			continue
+		}
+
+		out = append(out, line)
+	}
+
+	if skipping {
+		out = append(out, strings.Split(newBody, "\n")...)
+	}
+
+	return strings.Join(out, "\n")
 }
 
 func ValidateReplan(original, updated *epic.Epic, completedSprint, maxScope int) error {
