@@ -1,0 +1,1 @@
+Read and execute ALL instructions in .fry/code-review-prompt.md. This is a code review session. Review the sprint changes, fix any issues above LOW severity, and re-review until clean. Write your findings to .fry/sprint-review.txt after each review pass. AUTONOMOUS MODE: do NOT ask for permission. You have pre-authorized permission for all actions.

@@ -472,15 +472,15 @@ Do it.
 	assert.Equal(t, EffortLevel(""), ep.EffortLevel)
 }
 
-func TestParseEpic_AuditDirectives(t *testing.T) {
+func TestParseEpic_ReviewDirectives(t *testing.T) {
 	t.Parallel()
 
 	ep := parseTempEpic(t, `
-@epic Audit Test
-@audit_after_sprint
-@max_audit_iterations 5
-@audit_engine claude
-@audit_model auditor-v1
+@epic Review Test
+@review_after_sprint
+@max_review_iterations 5
+@review_engine claude
+@review_model reviewer-v1
 @sprint 1
 @name One
 @max_iterations 2
@@ -489,19 +489,22 @@ func TestParseEpic_AuditDirectives(t *testing.T) {
 Do it.
 `)
 
+	assert.True(t, ep.ReviewAfterSprint)
+	assert.Equal(t, 5, ep.MaxReviewIterations)
+	assert.True(t, ep.MaxReviewIterationsSet)
+	assert.Equal(t, "claude", ep.ReviewEngine)
+	assert.Equal(t, "reviewer-v1", ep.ReviewModel)
+	// Old fields stay in sync during transition
 	assert.True(t, ep.AuditAfterSprint)
 	assert.Equal(t, 5, ep.MaxAuditIterations)
-	assert.True(t, ep.MaxAuditIterationsSet)
-	assert.Equal(t, "claude", ep.AuditEngine)
-	assert.Equal(t, "auditor-v1", ep.AuditModel)
 }
 
-func TestParseEpic_AuditDefaultIterations(t *testing.T) {
+func TestParseEpic_ReviewDefaultIterations(t *testing.T) {
 	t.Parallel()
 
 	ep := parseTempEpic(t, `
-@epic Audit Default
-@audit_after_sprint
+@epic Review Default
+@review_after_sprint
 @sprint 1
 @name One
 @max_iterations 2
@@ -510,16 +513,36 @@ func TestParseEpic_AuditDefaultIterations(t *testing.T) {
 Do it.
 `)
 
+	assert.True(t, ep.ReviewAfterSprint)
+	assert.Equal(t, config.DefaultMaxAuditIterations, ep.MaxReviewIterations)
+	assert.False(t, ep.MaxReviewIterationsSet)
+}
+
+func TestParseEpic_ReviewDefaultEnabled(t *testing.T) {
+	t.Parallel()
+
+	ep := parseTempEpic(t, `
+@epic No Review Directive
+@sprint 1
+@name One
+@max_iterations 2
+@promise ONE
+@prompt
+Do it.
+`)
+
+	assert.True(t, ep.ReviewAfterSprint)
+	assert.Equal(t, config.DefaultMaxAuditIterations, ep.MaxReviewIterations)
+	assert.False(t, ep.MaxReviewIterationsSet)
 	assert.True(t, ep.AuditAfterSprint)
-	assert.Equal(t, config.DefaultMaxAuditIterations, ep.MaxAuditIterations)
-	assert.False(t, ep.MaxAuditIterationsSet)
 }
 
-func TestParseEpic_AuditDefaultEnabled(t *testing.T) {
+func TestParseEpic_NoReviewDirective(t *testing.T) {
 	t.Parallel()
 
 	ep := parseTempEpic(t, `
-@epic No Audit Directive
+@epic No Review
+@no_review
 @sprint 1
 @name One
 @max_iterations 2
@@ -528,27 +551,9 @@ func TestParseEpic_AuditDefaultEnabled(t *testing.T) {
 Do it.
 `)
 
-	assert.True(t, ep.AuditAfterSprint)
-	assert.Equal(t, config.DefaultMaxAuditIterations, ep.MaxAuditIterations)
-	assert.False(t, ep.MaxAuditIterationsSet)
-}
-
-func TestParseEpic_NoAuditDirective(t *testing.T) {
-	t.Parallel()
-
-	ep := parseTempEpic(t, `
-@epic No Audit
-@no_audit
-@sprint 1
-@name One
-@max_iterations 2
-@promise ONE
-@prompt
-Do it.
-`)
-
+	assert.False(t, ep.ReviewAfterSprint)
+	assert.Equal(t, 0, ep.MaxReviewIterations)
 	assert.False(t, ep.AuditAfterSprint)
-	assert.Equal(t, 0, ep.MaxAuditIterations)
 }
 
 func TestParseEpic_EffortDirectiveCaseInsensitive(t *testing.T) {
