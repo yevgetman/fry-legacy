@@ -124,6 +124,18 @@ func TestIsLockedActivePID(t *testing.T) {
 	assert.True(t, IsLocked(projectDir))
 }
 
+func TestProcessAlive_ZeroPID(t *testing.T) {
+	t.Parallel()
+
+	assert.False(t, processAlive(0))
+}
+
+func TestProcessAlive_NegativePID(t *testing.T) {
+	t.Parallel()
+
+	assert.False(t, processAlive(-1))
+}
+
 // P3: concurrent lock contention
 func TestAcquire_ConcurrentContention(t *testing.T) {
 	t.Parallel()

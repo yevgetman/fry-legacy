@@ -99,11 +99,12 @@ func ReadPID(projectDir string) int {
 }
 
 func processAlive(pid int) bool {
-	// On Unix, os.FindProcess always succeeds, so we skip it and go
-	// straight to the signal-0 liveness check.
-	err := syscall.Kill(pid, syscall.Signal(0))
-	if err != nil {
-		return !errors.Is(err, syscall.ESRCH)
+	if pid <= 0 {
+		return false
 	}
-	return true
+	err := syscall.Kill(pid, syscall.Signal(0))
+	if err == nil || errors.Is(err, syscall.EPERM) {
+		return true
+	}
+	return false
 }
