@@ -508,7 +508,7 @@ func TestCollectBuildState_SentinelAbsentNoAudit(t *testing.T) {
 	fryDir := filepath.Join(dir, config.FryDir)
 	require.NoError(t, os.MkdirAll(fryDir, 0o755))
 
-	// Epic with @no_audit — sentinel absent but audit was intentionally skipped.
+	// Epic with @no_review — sentinel absent but audit was intentionally skipped.
 	ep := &epic.Epic{
 		Name:             "TestEpic",
 		TotalSprints:     1,
