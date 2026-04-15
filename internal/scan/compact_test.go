@@ -155,6 +155,65 @@ func TestCompactMemories_ReadDirError(t *testing.T) {
 	assert.Contains(t, err.Error(), "compact memories: list dir:")
 }
 
+func TestCompactMemories_WriteError(t *testing.T) {
+	t.Parallel()
+
+	if os.Getuid() == 0 {
+		t.Skip("test requires non-root user (root bypasses permission checks)")
+	}
+
+	dir := t.TempDir()
+	memoriesDir := filepath.Join(dir, config.CodebaseMemoriesDir)
+	require.NoError(t, os.MkdirAll(memoriesDir, 0o755))
+
+	// Create >MaxMemoryCount memories so LoadMemories succeeds and threshold passes.
+	for i := 1; i <= config.MaxMemoryCount+5; i++ {
+		m := Memory{
+			Filename:   fmt.Sprintf("%03d-test.md", i),
+			Confidence: "medium",
+			Body:       fmt.Sprintf("Learning %d.", i),
+			Date:       "2026-03-29",
+		}
+		require.NoError(t, writeMemoryFile(filepath.Join(memoriesDir, m.Filename), m))
+	}
+
+	// Build valid compacted output.
+	var compactedOutput string
+	for i := 1; i <= config.CompactedMemoryCount; i++ {
+		compactedOutput += fmt.Sprintf("MEMORY: <confidence: medium>\nCompacted %d.\n---\n", i)
+	}
+
+	// Restore permissions for cleanup.
+	t.Cleanup(func() {
+		_ = os.Chmod(memoriesDir, 0o755)
+	})
+
+	// Use a sabotage engine that also makes the dir read-only after clearing,
+	// so the write phase fails.
+	eng := &compactWriteFailEngine{output: compactedOutput, memoriesDir: memoriesDir}
+	err := CompactMemories(context.Background(), dir, eng, "haiku", "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "memory writes failed")
+}
+
+// compactWriteFailEngine deletes all memory files then makes the directory
+// read-only, causing the write phase to fail.
+type compactWriteFailEngine struct {
+	output      string
+	memoriesDir string
+}
+
+func (s *compactWriteFailEngine) Run(_ context.Context, _ string, _ engine.RunOpts) (string, int, error) {
+	// Make dir read-only so writes will fail after the delete phase runs.
+	entries, _ := os.ReadDir(s.memoriesDir)
+	for _, e := range entries {
+		_ = os.Remove(filepath.Join(s.memoriesDir, e.Name()))
+	}
+	_ = os.Chmod(s.memoriesDir, 0o555)
+	return s.output, 0, nil
+}
+func (s *compactWriteFailEngine) Name() string { return "write-fail-stub" }
+
 func TestNeedsCompaction(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

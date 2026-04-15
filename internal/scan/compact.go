@@ -72,6 +72,7 @@ func CompactMemories(ctx context.Context, projectDir string, eng engine.Engine, 
 	}
 
 	// Write compacted set with fresh numbering.
+	var writeErrors []error
 	for i, m := range compacted {
 		if m.Date == "" {
 			m.Date = "compacted"
@@ -81,10 +82,12 @@ func CompactMemories(ctx context.Context, projectDir string, eng engine.Engine, 
 		}
 		m.Filename = fmt.Sprintf("%03d-%s-%s.md", i+1, m.Date, slugify(m.Body, 40))
 		if writeErr := writeMemoryFile(filepath.Join(memoriesDir, m.Filename), m); writeErr != nil {
-			continue
+			writeErrors = append(writeErrors, writeErr)
 		}
 	}
-
+	if len(writeErrors) > 0 {
+		return fmt.Errorf("compact memories: %d of %d memory writes failed (first error: %w)", len(writeErrors), len(compacted), writeErrors[0])
+	}
 	return nil
 }
 
