@@ -346,7 +346,7 @@ These are design decisions that must be preserved:
 
 7. **Progress tracking uses two files.** `sprint-progress.txt` (per-sprint, unbounded append) and `epic-progress.txt` (cross-sprint, compacted summaries). This separation is intentional for bounded context management — don't merge them.
 
-8. **Prompt assembly is layered.** The 8-layer prompt structure in `sprint/prompt.go` has a specific order (layers 1, 1.25, 1.5, 1.75, 2, 3, 4, 5). New prompt content must fit into one of the existing layers or have a clear justification for a new layer.
+8. **Prompt assembly is layered.** The 13-layer prompt structure in `sprint/prompt.go` has a specific order (layers 0, 0.5, 0.75, 1, 1.25, 1.5, 1.625, 1.7, 1.75, 2, 3, 4, 5). New prompt content must fit into one of the existing layers or have a clear justification for a new layer.
 
 9. **Sanity checks are independent of the AI agent.** Checks run in a separate process, not inside the agent. This separation is by design.
 
