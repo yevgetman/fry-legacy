@@ -43,6 +43,9 @@ func Start(ctx context.Context, opts StartOptions) (*Config, error) {
 		}
 		opts.ExecutablePath = exe
 	}
+	if _, statErr := os.Stat(opts.ExecutablePath); statErr != nil {
+		return nil, fmt.Errorf("resolved fry executable %q is not accessible: %w", opts.ExecutablePath, statErr)
+	}
 	if opts.TeamID == "" {
 		opts.TeamID = fmt.Sprintf("team-%s", time.Now().UTC().Format("20060102T150405Z"))
 	}
@@ -132,6 +135,16 @@ func Resume(ctx context.Context, projectDir, teamID, executable string) error {
 	if err != nil {
 		return err
 	}
+	if executable == "" {
+		exe, err := os.Executable()
+		if err != nil {
+			return err
+		}
+		executable = exe
+	}
+	if _, statErr := os.Stat(executable); statErr != nil {
+		return fmt.Errorf("resolved fry executable %q is not accessible: %w", executable, statErr)
+	}
 	cfg.Status = StatusRunning
 	if err := SaveConfig(projectDir, cfg); err != nil {
 		return err
@@ -145,13 +158,6 @@ func Resume(ctx context.Context, projectDir, teamID, executable string) error {
 		if err := SaveConfig(projectDir, cfg); err != nil {
 			return err
 		}
-	}
-	if executable == "" {
-		exe, err := os.Executable()
-		if err != nil {
-			return err
-		}
-		executable = exe
 	}
 	if err := RestartDeadWorkers(ctx, projectDir, teamID, executable); err != nil {
 		return err
@@ -222,6 +228,9 @@ func Scale(ctx context.Context, opts ScaleOptions, executable string) error {
 			return err
 		}
 		executable = exe
+	}
+	if _, statErr := os.Stat(executable); statErr != nil {
+		return fmt.Errorf("resolved fry executable %q is not accessible: %w", executable, statErr)
 	}
 
 	switch {

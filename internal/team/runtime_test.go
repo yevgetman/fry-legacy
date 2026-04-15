@@ -61,6 +61,66 @@ func (f *fakeTmux) WindowAlive(ctx context.Context, session, window string) bool
 	return ok
 }
 
+func TestStart_InvalidExecutablePath(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	_, err := Start(context.Background(), StartOptions{
+		ProjectDir:       dir,
+		TeamID:           "test-exe-validation",
+		Workers:          1,
+		GitIsolationMode: IsolationShared,
+		ExecutablePath:   filepath.Join(t.TempDir(), "nonexistent-binary"),
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not accessible")
+}
+
+func TestResume_InvalidExecutablePath(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	// Set up minimal team config so Resume gets past LoadConfig
+	require.NoError(t, ensureTeamLayout(dir, "test-team"))
+	cfg := &Config{
+		TeamID:           "test-team",
+		ProjectDir:       dir,
+		BuildDir:         dir,
+		Status:           StatusPaused,
+		TMuxSession:      "fry-test-team",
+		GitIsolationMode: IsolationShared,
+	}
+	require.NoError(t, SaveConfig(dir, cfg))
+
+	err := Resume(context.Background(), dir, "test-team", filepath.Join(t.TempDir(), "nonexistent-binary"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not accessible")
+}
+
+func TestScale_InvalidExecutablePath(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	require.NoError(t, ensureTeamLayout(dir, "test-team"))
+	cfg := &Config{
+		TeamID:           "test-team",
+		ProjectDir:       dir,
+		BuildDir:         dir,
+		Status:           StatusRunning,
+		TMuxSession:      "fry-test-team",
+		GitIsolationMode: IsolationShared,
+	}
+	require.NoError(t, SaveConfig(dir, cfg))
+
+	err := Scale(context.Background(), ScaleOptions{
+		ProjectDir: dir,
+		TeamID:     "test-team",
+		Add:        1,
+	}, filepath.Join(t.TempDir(), "nonexistent-binary"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not accessible")
+}
+
 func TestStartSharedTeamRuntime(t *testing.T) {
 	dir := t.TempDir()
 	taskFile := filepath.Join(dir, "tasks.json")
@@ -78,13 +138,17 @@ func TestStartSharedTeamRuntime(t *testing.T) {
 	DefaultTmux = newFakeTmux()
 	t.Cleanup(func() { DefaultTmux = oldTmux })
 
+	// Create a fake executable file so the os.Stat validation passes.
+	fakeExe := filepath.Join(dir, "fry-fake")
+	require.NoError(t, os.WriteFile(fakeExe, []byte("#!/bin/sh\n"), 0o755))
+
 	cfg, err := Start(context.Background(), StartOptions{
 		ProjectDir:       dir,
 		TeamID:           "demo-team",
 		Workers:          2,
 		Roles:            []string{"executor", "tester"},
 		GitIsolationMode: IsolationShared,
-		ExecutablePath:   "/tmp/fry",
+		ExecutablePath:   fakeExe,
 		TaskFile:         taskFile,
 	})
 	require.NoError(t, err)
