@@ -65,7 +65,7 @@ fry/
 │   │   └── githubissue_test.go  # Tests for URL parsing, gh validation, persistence
 │   ├── sprint/
 │   │   ├── runner.go            # Sprint execution loop (iterations, no-op detection)
-│   │   ├── prompt.go            # Layered prompt assembly (10 layers, 0.5 through 5)
+│   │   ├── prompt.go            # Layered prompt assembly (13 layers, 0 through 5): authority, codebase context, memories, executive context, media, user directive, disposition, steering, quality, plan, sprint, iteration memory, completion
 │   │   ├── progress.go          # Iteration memory management
 │   │   └── compactor.go         # Sprint progress → epic-progress summarization
 │   ├── steering/                # Graceful exits, stop requests, hold/pause sentinels, and resume points
