@@ -106,8 +106,7 @@ func CollectBuildState(ctx context.Context, projectDir string, ep *epic.Epic, al
 	if _, err := os.Stat(sentinelPath); err == nil {
 		state.BuildAuditComplete = true
 	} else if !os.IsNotExist(err) {
-		// Silently treat as absent — consistent with other unreadable artifacts
-		// in this collector. Callers control output.
+		fmt.Fprintf(os.Stderr, "fry: warning: unable to stat build audit sentinel: %v\n", err)
 	}
 
 	// Track whether the build audit is configured for this epic.

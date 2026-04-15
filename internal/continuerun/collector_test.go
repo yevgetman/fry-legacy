@@ -595,6 +595,55 @@ func TestCollectBuildState_SentinelStatError(t *testing.T) {
 	assert.False(t, state.BuildAuditComplete)
 }
 
+func TestCollectBuildState_SentinelStatPermissionError(t *testing.T) {
+	t.Parallel()
+
+	if os.Getuid() == 0 {
+		t.Skip("test requires non-root user (root bypasses permission checks)")
+	}
+
+	dir := t.TempDir()
+	fryDir := filepath.Join(dir, config.FryDir)
+	require.NoError(t, os.MkdirAll(fryDir, 0o755))
+
+	// Create the sentinel file, then make the parent directory non-traversable
+	// so os.Stat returns a permission error (not IsNotExist).
+	sentinelPath := filepath.Join(dir, config.BuildAuditCompleteFile)
+	require.NoError(t, os.WriteFile(sentinelPath, []byte("done\n"), 0o644))
+	require.NoError(t, os.Chmod(fryDir, 0o644))
+	t.Cleanup(func() {
+		_ = os.Chmod(fryDir, 0o755)
+	})
+
+	ep := &epic.Epic{
+		Name:             "TestEpic",
+		TotalSprints:     1,
+		AuditAfterSprint: true,
+		EffortLevel:      epic.EffortHigh,
+		Sprints:          []epic.Sprint{{Number: 1, Name: "Setup"}},
+	}
+
+	// Capture stderr to verify warning is logged
+	oldStderr := os.Stderr
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stderr = w
+
+	state, collectErr := CollectBuildState(context.Background(), dir, ep, false)
+
+	_ = w.Close()
+	os.Stderr = oldStderr
+
+	stderrBuf := make([]byte, 4096)
+	n, _ := r.Read(stderrBuf)
+	_ = r.Close()
+	stderrOutput := string(stderrBuf[:n])
+
+	require.NoError(t, collectErr)
+	assert.False(t, state.BuildAuditComplete)
+	assert.Contains(t, stderrOutput, "unable to stat build audit sentinel")
+}
+
 func TestReadSprintProgressExcerpt_FiltersBySprint(t *testing.T) {
 	t.Parallel()
 
