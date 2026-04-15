@@ -65,10 +65,10 @@ func RunWithDualLogs(ctx context.Context, prompt, iterPath, sprintLogPath string
 		runOpts.Stderr = writer
 		output, exitCode, runErr := opts.Engine.Run(ctx, prompt, runOpts)
 		if err := iterLog.Sync(); err != nil {
-			return output, fmt.Errorf("sync iter log: %w", err)
+			frylog.Log("WARNING: sync iter log: %v", err)
 		}
 		if err := sprintLog.Sync(); err != nil {
-			return output, fmt.Errorf("sync sprint log: %w", err)
+			frylog.Log("WARNING: sync sprint log: %v", err)
 		}
 		if runErr != nil && ctx.Err() == nil {
 			effectiveRunOpts, _ := engine.AdaptRunOptsForEngine(opts.Engine.Name(), runOpts)
@@ -83,10 +83,10 @@ func RunWithDualLogs(ctx context.Context, prompt, iterPath, sprintLogPath string
 	runOpts.Stderr = writer
 	output, exitCode, runErr := opts.Engine.Run(ctx, prompt, runOpts)
 	if err := iterLog.Sync(); err != nil {
-		return output, fmt.Errorf("sync iter log: %w", err)
+		frylog.Log("WARNING: sync iter log: %v", err)
 	}
 	if err := sprintLog.Sync(); err != nil {
-		return output, fmt.Errorf("sync sprint log: %w", err)
+		frylog.Log("WARNING: sync sprint log: %v", err)
 	}
 	if runErr != nil && ctx.Err() == nil {
 		effectiveRunOpts, _ := engine.AdaptRunOptsForEngine(opts.Engine.Name(), runOpts)

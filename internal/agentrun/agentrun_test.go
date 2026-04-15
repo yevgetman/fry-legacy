@@ -272,6 +272,36 @@ func TestRunWithDualLogs_NilStdoutDefault(t *testing.T) {
 	})
 }
 
+// TestRunWithDualLogs_SyncErrorNotFatal documents that sync errors after a
+// successful engine run do not cause RunWithDualLogs to return an error.
+// The behavioral contract: engine success => (output, nil) regardless of Sync().
+func TestRunWithDualLogs_SyncErrorNotFatal(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	eng := &mockEngine{output: "engine succeeded", exitCode: 0}
+	opts := DualLogOpts{Engine: eng, WorkDir: dir, Verbose: false}
+
+	output, err := RunWithDualLogs(context.Background(), "prompt",
+		filepath.Join(dir, "iter.log"), filepath.Join(dir, "sprint.log"), opts)
+	require.NoError(t, err)
+	assert.Equal(t, "engine succeeded", output)
+}
+
+func TestRunWithDualLogs_SyncErrorNotFatal_Verbose(t *testing.T) {
+	t.Parallel()
+
+	var buf strings.Builder
+	dir := t.TempDir()
+	eng := &mockEngine{output: "engine succeeded verbose", exitCode: 0}
+	opts := DualLogOpts{Engine: eng, WorkDir: dir, Verbose: true, Stdout: &buf}
+
+	output, err := RunWithDualLogs(context.Background(), "prompt",
+		filepath.Join(dir, "iter.log"), filepath.Join(dir, "sprint.log"), opts)
+	require.NoError(t, err)
+	assert.Equal(t, "engine succeeded verbose", output)
+}
+
 // Test 5: missing iterPath directory — returns a non-nil error.
 func TestRunWithDualLogs_MissingIterDir(t *testing.T) {
 	t.Parallel()
