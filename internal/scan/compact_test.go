@@ -23,6 +23,20 @@ func (s *compactStubEngine) Run(_ context.Context, _ string, _ engine.RunOpts) (
 }
 func (s *compactStubEngine) Name() string { return "stub" }
 
+// compactSabotageEngine replaces memoriesDir with a regular file during Run,
+// causing the second os.ReadDir in CompactMemories to fail.
+type compactSabotageEngine struct {
+	output      string
+	memoriesDir string
+}
+
+func (s *compactSabotageEngine) Run(_ context.Context, _ string, _ engine.RunOpts) (string, int, error) {
+	_ = os.RemoveAll(s.memoriesDir)
+	_ = os.WriteFile(s.memoriesDir, []byte("not a dir"), 0o644)
+	return s.output, 0, nil
+}
+func (s *compactSabotageEngine) Name() string { return "sabotage-stub" }
+
 func TestCompactMemories(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -112,16 +126,33 @@ func TestCompactMemories_ReadDirError(t *testing.T) {
 	dir := t.TempDir()
 
 	memoriesDir := filepath.Join(dir, config.CodebaseMemoriesDir)
-	// Create parent directories so the memories path can be a regular file.
-	require.NoError(t, os.MkdirAll(filepath.Dir(memoriesDir), 0o755))
-	// Place a regular file where the directory should be — os.ReadDir will
-	// return a non-NotExist error (ENOTDIR on most platforms).
-	require.NoError(t, os.WriteFile(memoriesDir, []byte("not a dir"), 0o644))
+	require.NoError(t, os.MkdirAll(memoriesDir, 0o755))
 
-	eng := &compactStubEngine{output: "ignored"}
+	// Create >MaxMemoryCount memories so LoadMemories succeeds and the
+	// threshold check passes.
+	for i := 1; i <= config.MaxMemoryCount+5; i++ {
+		m := Memory{
+			Filename:   fmt.Sprintf("%03d-test.md", i),
+			Confidence: "medium",
+			Body:       fmt.Sprintf("Learning %d.", i),
+			Date:       "2026-03-29",
+		}
+		require.NoError(t, writeMemoryFile(filepath.Join(memoriesDir, m.Filename), m))
+	}
+
+	// Build valid compacted output so the engine succeeds.
+	var compactedOutput string
+	for i := 1; i <= config.CompactedMemoryCount; i++ {
+		compactedOutput += fmt.Sprintf("MEMORY: <confidence: medium>\nCompacted %d.\n---\n", i)
+	}
+
+	// Use an engine that replaces the memoriesDir with a regular file during
+	// Run. This happens after LoadMemories (line 23) but before the second
+	// os.ReadDir (line 64), so only line 64 sees the error.
+	eng := &compactSabotageEngine{output: compactedOutput, memoriesDir: memoriesDir}
 	err := CompactMemories(context.Background(), dir, eng, "haiku", "")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "compact memories")
+	assert.Contains(t, err.Error(), "compact memories: list dir:")
 }
 
 func TestNeedsCompaction(t *testing.T) {
