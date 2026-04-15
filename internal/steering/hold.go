@@ -35,6 +35,7 @@ func WriteDecisionNeeded(projectDir string, prompt string) error {
 		return fmt.Errorf("write decision needed: %w", err)
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("write decision needed: rename: %w", err)
 	}
 	return nil
