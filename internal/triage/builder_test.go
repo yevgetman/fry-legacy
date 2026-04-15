@@ -519,12 +519,13 @@ func TestWriteEpicFile(t *testing.T) {
 		epicPath := filepath.Join(dir, ".fry", "epic.md")
 
 		original := &epic.Epic{
-			Name:             "Test Epic",
-			Engine:           "claude",
-			EffortLevel:      epic.EffortFast,
-			MaxHealAttempts:  0,
-			AuditAfterSprint: false,
-			TotalSprints:     1,
+			Name:              "Test Epic",
+			Engine:            "claude",
+			EffortLevel:       epic.EffortFast,
+			MaxHealAttempts:   0,
+			AuditAfterSprint:  false,
+			ReviewAfterSprint: false,
+			TotalSprints:      1,
 			Sprints: []epic.Sprint{{
 				Number:        1,
 				Name:          "Do the thing",
@@ -547,7 +548,7 @@ func TestWriteEpicFile(t *testing.T) {
 		assert.Equal(t, original.Name, parsed.Name)
 		assert.Equal(t, original.Engine, parsed.Engine)
 		assert.Equal(t, original.EffortLevel, parsed.EffortLevel)
-		assert.False(t, parsed.AuditAfterSprint)
+		assert.False(t, parsed.ReviewAfterSprint)
 		require.Len(t, parsed.Sprints, 1)
 
 		s := parsed.Sprints[0]
@@ -566,12 +567,13 @@ func TestWriteEpicFile(t *testing.T) {
 		epicPath := filepath.Join(dir, ".fry", "epic.md")
 
 		original := &epic.Epic{
-			Name:             "Multi Sprint",
-			Engine:           "codex",
-			EffortLevel:      epic.EffortStandard,
-			MaxHealAttempts:  3,
-			AuditAfterSprint: true,
-			TotalSprints:     2,
+			Name:              "Multi Sprint",
+			Engine:            "codex",
+			EffortLevel:       epic.EffortStandard,
+			MaxHealAttempts:   3,
+			AuditAfterSprint:  true,
+			ReviewAfterSprint: true,
+			TotalSprints:      2,
 			Sprints: []epic.Sprint{
 				{
 					Number:        1,
@@ -605,21 +607,21 @@ func TestWriteEpicFile(t *testing.T) {
 		assert.Equal(t, "Sprint two", parsed.Sprints[1].Name)
 	})
 
-	t.Run("roundtrip with max_audit_iterations", func(t *testing.T) {
+	t.Run("roundtrip with max_review_iterations", func(t *testing.T) {
 		t.Parallel()
 
 		dir := t.TempDir()
 		epicPath := filepath.Join(dir, ".fry", "epic.md")
 
 		original := &epic.Epic{
-			Name:                  "Audited Task",
-			Engine:                "claude",
-			EffortLevel:           epic.EffortStandard,
-			MaxHealAttempts:       0,
-			AuditAfterSprint:      true,
-			MaxAuditIterations:    1,
-			MaxAuditIterationsSet: true,
-			TotalSprints:          1,
+			Name:                   "Reviewed Task",
+			Engine:                 "claude",
+			EffortLevel:            epic.EffortStandard,
+			MaxHealAttempts:        0,
+			ReviewAfterSprint:      true,
+			MaxReviewIterations:    1,
+			MaxReviewIterationsSet: true,
+			TotalSprints:           1,
 			Sprints: []epic.Sprint{{
 				Number:        1,
 				Name:          "Do work",
@@ -632,15 +634,15 @@ func TestWriteEpicFile(t *testing.T) {
 		err := WriteEpicFile(epicPath, original)
 		require.NoError(t, err)
 
-		// Verify the file contains @max_audit_iterations.
+		// Verify the file contains @max_review_iterations.
 		content, readErr := os.ReadFile(epicPath)
 		require.NoError(t, readErr)
-		assert.Contains(t, string(content), "@max_audit_iterations 1")
+		assert.Contains(t, string(content), "@max_review_iterations 1")
 
 		parsed, parseErr := epic.ParseEpic(epicPath)
 		require.NoError(t, parseErr)
-		assert.True(t, parsed.MaxAuditIterationsSet)
-		assert.Equal(t, 1, parsed.MaxAuditIterations)
-		assert.True(t, parsed.AuditAfterSprint)
+		assert.True(t, parsed.MaxReviewIterationsSet)
+		assert.Equal(t, 1, parsed.MaxReviewIterations)
+		assert.True(t, parsed.ReviewAfterSprint)
 	})
 }

@@ -27,7 +27,8 @@ func ParseEpic(path string) (*Epic, error) {
 	defer file.Close()
 
 	ep := &Epic{
-		AuditAfterSprint: true, // on by default; use @no_audit to disable
+		AuditAfterSprint:  true, // on by default; use @no_review to disable
+		ReviewAfterSprint: true, // on by default; use @no_review to disable
 	}
 	state := stateGlobal
 	scanner := bufio.NewScanner(file)
@@ -128,21 +129,22 @@ func ParseEpic(path string) (*Epic, error) {
 					if parseErr != nil {
 						return nil, fmt.Errorf("parse epic line %d: %w", lineNo, parseErr)
 					}
-				case "@audit_after_sprint":
+				case "@review_after_sprint":
 					ep.AuditAfterSprint = true
-				case "@no_audit":
+					ep.ReviewAfterSprint = true
+				case "@no_review":
 					ep.AuditAfterSprint = false
-				case "@max_audit_iterations":
+					ep.ReviewAfterSprint = false
+				case "@max_review_iterations":
 					var parseErr error
-					ep.MaxAuditIterations, parseErr = parseIntDirective(directive, value)
+					ep.MaxReviewIterations, parseErr = parseIntDirective(directive, value)
 					if parseErr != nil {
 						return nil, fmt.Errorf("parse epic line %d: %w", lineNo, parseErr)
 					}
+					ep.MaxReviewIterationsSet = true
+					// Keep old field in sync during transition
+					ep.MaxAuditIterations = ep.MaxReviewIterations
 					ep.MaxAuditIterationsSet = true
-				case "@audit_engine":
-					ep.AuditEngine = value
-				case "@audit_model":
-					ep.AuditModel = value
 				case "@effort":
 					ep.EffortLevel, err = ParseEffortLevel(value)
 				case "@sprint":
@@ -256,6 +258,9 @@ func ParseEpic(path string) (*Epic, error) {
 	}
 	if ep.MaxAuditIterations == 0 && ep.AuditAfterSprint {
 		ep.MaxAuditIterations = config.DefaultMaxAuditIterations
+	}
+	if ep.MaxReviewIterations == 0 && ep.ReviewAfterSprint {
+		ep.MaxReviewIterations = config.DefaultMaxAuditIterations
 	}
 	ep.TotalSprints = len(ep.Sprints)
 

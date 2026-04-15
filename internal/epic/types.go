@@ -159,8 +159,11 @@ type Epic struct {
 	MaxFailPercentSet    bool
 	CompactWithAgent     bool
 	ReviewBetweenSprints bool
-	ReviewEngine         string
-	ReviewModel          string
+	ReviewEngine          string
+	ReviewModel           string
+	ReviewAfterSprint     bool
+	MaxReviewIterations   int
+	MaxReviewIterationsSet bool
 	MaxDeviationScope    int
 	AuditAfterSprint     bool
 	MaxAuditIterations    int

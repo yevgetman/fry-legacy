@@ -20,6 +20,7 @@ import (
 
 	"github.com/yevgetman/fry/internal/agent"
 	"github.com/yevgetman/fry/internal/audit"
+	"github.com/yevgetman/fry/internal/codereview"
 	"github.com/yevgetman/fry/internal/color"
 	"github.com/yevgetman/fry/internal/config"
 	"github.com/yevgetman/fry/internal/consciousness"
@@ -63,6 +64,7 @@ var (
 	runMode                  string
 	runEffort                string
 	runNoAudit               bool
+	runNoCodeReview          bool
 	runResume                bool
 	runSprint                int
 	runContinue              bool
@@ -1234,35 +1236,35 @@ var runCmd = &cobra.Command{
 					return nil
 				}
 
-				// Sprint audit
-				if ep.AuditAfterSprint && !runNoAudit && (ep.EffortLevel != epic.EffortFast || runAlwaysVerify) {
-					buildStatus.Build.Phase = "audit"
+				// Sprint code review
+				if ep.ReviewAfterSprint && !runNoCodeReview && !runNoAudit && (ep.EffortLevel != epic.EffortFast || runAlwaysVerify) {
+					buildStatus.Build.Phase = "review"
 					writeCurrentBuildStatus()
-					writeBuildPhase(projectPath, "audit")
+					writeBuildPhase(projectPath, "review")
 					if originalProjectPath != projectPath {
-						writeBuildPhase(originalProjectPath, "audit:worktree")
+						writeBuildPhase(originalProjectPath, "review:worktree")
 					}
-					auditEngine, err := resolveAuditEngine(runPlanner, currentEngineName(), ep.AuditEngine, mcpOpts...)
+					reviewEngine, err := resolveReviewEngine(runPlanner, currentEngineName(), ep.ReviewEngine, mcpOpts...)
 					if err != nil {
 						return err
 					}
 					gitDiff, err := git.GitDiffForAudit(ctx, projectPath)
 					if err != nil {
-						frlog.Log("WARNING: could not capture git diff for audit: %v", err)
+						frlog.Log("WARNING: could not capture git diff for review: %v", err)
 						gitDiff = "(git diff unavailable)"
 					}
-					complexity := audit.ClassifyComplexity(gitDiff, modeStr)
-					frlog.Log("  AUDIT: classified sprint complexity as %s", complexity)
-					auditResult, err := audit.RunAuditLoop(ctx, audit.AuditOpts{
+					complexity := codereview.ClassifyComplexity(gitDiff, modeStr)
+					frlog.Log("  REVIEW: classified sprint complexity as %s", complexity)
+					reviewResult, err := codereview.RunCodeReview(ctx, codereview.ReviewOpts{
 						ProjectDir: projectPath,
 						Sprint:     spr,
 						Epic:       ep,
-						Engine:     auditEngine,
+						Engine:     reviewEngine,
 						Complexity: complexity,
 						GitDiff:    gitDiff,
 						DiffFn:     func() (string, error) { return git.GitDiffForAudit(ctx, projectPath) },
-						ProgressFn: func(progress audit.AuditProgress) {
-							updateBuildStatusAuditProgress(buildStatus, spr.Number, progress)
+						ProgressFn: func(progress codereview.ReviewProgress) {
+							updateBuildStatusCodeReviewProgress(buildStatus, spr.Number, progress)
 							writeCurrentBuildStatus()
 						},
 						Verbose: frlog.Verbose,
@@ -1291,37 +1293,23 @@ var runCmd = &cobra.Command{
 						}
 						return err
 					}
-					if auditResult.Metrics != nil {
-						auditResult.Metrics.EscapedToBuildAudit = totalFindingCount(auditResult.SeverityCounts)
-						if err := writeAuditMetricsArtifact(projectPath, spr.Number, auditResult.Metrics); err != nil {
-							frlog.Log("WARNING: could not write audit metrics artifact: %v", err)
+					if reviewResult.Metrics != nil {
+						if err := writeReviewMetricsArtifact(projectPath, spr.Number, reviewResult.Metrics); err != nil {
+							frlog.Log("WARNING: could not write review metrics artifact: %v", err)
 						}
-						frlog.Log("  AUDIT METRICS: %d calls, %dms, %.0f%% no-op rate, %.1f verify yield",
-							auditResult.Metrics.TotalCalls(),
-							auditResult.Metrics.TotalDurationMs(),
-							auditResult.Metrics.NoOpRate()*100,
-							auditResult.Metrics.VerifyYield(),
+						frlog.Log("  REVIEW METRICS: %d calls, %dms",
+							reviewResult.Metrics.TotalCalls(),
+							reviewResult.Metrics.TotalDurationMs(),
 						)
 					}
-					if !auditResult.Passed {
-						// Blocker findings are advisory — log them but do not
-						// halt the build. The fix loop already attempted remediation;
-						// blockers that couldn't be fixed are surfaced in the result
-						// for the user but do not prevent forward progress.
-						if auditResult.Blocked && len(auditResult.Blockers) > 0 {
-							blockerSummary := auditSummarizeBlockers(auditResult)
-							frlog.Log("  AUDIT: advisory blockers — %s", blockerSummary)
-							mu.Lock()
-							results[sprintNum-startSprint].AuditWarning = blockerSummary
-							mu.Unlock()
-						}
-						if auditResult.Blocking {
-							frlog.Log("  AUDIT: FAILED — %s remain after %d audit cycles",
-								audit.FormatCounts(auditResult.SeverityCounts), auditResult.Iterations)
-							if cleanupErr := audit.Cleanup(projectPath); cleanupErr != nil {
-								frlog.Log("WARNING: audit cleanup failed: %v", cleanupErr)
+					if !reviewResult.Passed {
+						if reviewResult.Blocking {
+							frlog.Log("  REVIEW: FAILED — %s remain",
+								codereview.FormatCounts(reviewResult.SeverityCounts))
+							if cleanupErr := codereview.Cleanup(projectPath); cleanupErr != nil {
+								frlog.Log("WARNING: review cleanup failed: %v", cleanupErr)
 							}
-							failStatus := fmt.Sprintf("FAIL (audit: %s)", auditResult.MaxSeverity)
+							failStatus := fmt.Sprintf("FAIL (review: %s)", reviewResult.MaxSeverity)
 							mu.Lock()
 							results[sprintNum-startSprint].Status = failStatus
 							mu.Unlock()
@@ -1332,23 +1320,22 @@ var runCmd = &cobra.Command{
 							fmt.Fprintf(cmd.OutOrStdout(), "Resume:   fry run --resume --sprint %d\n", spr.Number)
 							fmt.Fprintf(cmd.OutOrStdout(), "Restart:  fry run --sprint %d\n", spr.Number)
 							fmt.Fprintf(cmd.OutOrStdout(), "Continue: fry run --continue\n")
-							exitErr = fmt.Errorf("sprint %d audit failed: %s after %d cycles",
-								spr.Number, failStatus, auditResult.Iterations)
+							exitErr = fmt.Errorf("sprint %d review failed: %s",
+								spr.Number, failStatus)
 							break
 						}
-						warning := fmt.Sprintf("%s remain after %d audit cycles (advisory)",
-							audit.FormatCounts(auditResult.SeverityCounts), auditResult.Iterations)
-						frlog.Log("  AUDIT: %s", warning)
+						warning := fmt.Sprintf("%s remain after review (advisory)",
+							codereview.FormatCounts(reviewResult.SeverityCounts))
+						frlog.Log("  REVIEW: %s", warning)
 						mu.Lock()
 						results[sprintNum-startSprint].AuditWarning = warning
 						mu.Unlock()
 					}
-					// Note LOW remainders at high/max effort (audit passed but LOW items remain)
-					if auditResult.Passed && auditResult.SeverityCounts["LOW"] > 0 &&
+					if reviewResult.Passed && reviewResult.SeverityCounts["LOW"] > 0 &&
 						(ep.EffortLevel == epic.EffortHigh || ep.EffortLevel == epic.EffortMax) {
-						lowNote := fmt.Sprintf("%d LOW issues remain after %d audit cycles (non-blocking)",
-							auditResult.SeverityCounts["LOW"], auditResult.Iterations)
-						frlog.Log("  AUDIT: %s", lowNote)
+						lowNote := fmt.Sprintf("%d LOW issues remain after review (non-blocking)",
+							reviewResult.SeverityCounts["LOW"])
+						frlog.Log("  REVIEW: %s", lowNote)
 						mu.Lock()
 						if results[sprintNum-startSprint].AuditWarning == "" {
 							results[sprintNum-startSprint].AuditWarning = lowNote
@@ -1357,27 +1344,27 @@ var runCmd = &cobra.Command{
 						}
 						mu.Unlock()
 					}
-					if cleanupErr := audit.Cleanup(projectPath); cleanupErr != nil {
-						frlog.Log("WARNING: audit cleanup failed: %v", cleanupErr)
+					if cleanupErr := codereview.Cleanup(projectPath); cleanupErr != nil {
+						frlog.Log("WARNING: review cleanup failed: %v", cleanupErr)
 					}
 
 					if observerEnabled {
-						auditData := map[string]string{
-							"passed":     strconv.FormatBool(auditResult.Passed),
-							"iterations": strconv.Itoa(auditResult.Iterations),
+						reviewData := map[string]string{
+							"passed":     strconv.FormatBool(reviewResult.Passed),
+							"iterations": strconv.Itoa(reviewResult.Iterations),
 						}
-						if auditResult.MaxSeverity != "" {
-							auditData["max_severity"] = auditResult.MaxSeverity
+						if reviewResult.MaxSeverity != "" {
+							reviewData["max_severity"] = reviewResult.MaxSeverity
 						}
 						_ = observer.EmitEvent(projectPath, observer.Event{
 							Type:   observer.EventAuditComplete,
 							Sprint: spr.Number,
-							Data:   auditData,
+							Data:   reviewData,
 						})
 					}
 
-					// Update build status with audit result
-					updateBuildStatusAudit(buildStatus, spr.Number, auditResult)
+					// Update build status with code review result
+					updateBuildStatusCodeReview(buildStatus, spr.Number, reviewResult)
 					writeCurrentBuildStatus()
 					buildStatus.Build.Phase = "sprint"
 					writeCurrentBuildStatus()
@@ -2516,6 +2503,7 @@ func init() {
 	runCmd.Flags().StringVar(&runMode, "mode", "", "Execution mode: software, planning, writing")
 	runCmd.Flags().StringVar(&runEffort, "effort", "", "Effort level: fast, standard, high, max (default: auto)")
 	runCmd.Flags().BoolVar(&runNoAudit, "no-audit", false, "Disable sprint and build audits")
+	runCmd.Flags().BoolVar(&runNoCodeReview, "no-code-review", false, "Disable sprint code review")
 	runCmd.Flags().BoolVar(&runResume, "resume", false, "Resume failed sprint: skip iterations, go straight to sanity checks + alignment with boosted attempts")
 	runCmd.Flags().IntVar(&runSprint, "sprint", 0, "Start from sprint N (alternative to positional sprint argument)")
 	runCmd.Flags().BoolVar(&runContinue, "continue", false, "Use an LLM agent to analyze build state and resume from where it left off")
@@ -2931,6 +2919,64 @@ func writeAuditMetricsArtifact(projectDir string, sprintNum int, metrics *audit.
 	}
 	data = append(data, '\n')
 	return os.WriteFile(path, data, 0o644)
+}
+
+func writeReviewMetricsArtifact(projectDir string, sprintNum int, metrics *codereview.ReviewMetrics) error {
+	if metrics == nil {
+		return nil
+	}
+	path := filepath.Join(projectDir, config.BuildLogsDir, fmt.Sprintf("sprint%d_review_metrics.json", sprintNum))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(metrics, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	return os.WriteFile(path, data, 0o644)
+}
+
+func updateBuildStatusCodeReview(status *agent.BuildStatus, sprintNum int, reviewResult *codereview.ReviewResult) {
+	if reviewResult == nil {
+		return
+	}
+	idx := findSprintStatusIndex(status, sprintNum)
+	if idx < 0 {
+		return
+	}
+	outcome := "pass"
+	if reviewResult.Blocking {
+		outcome = "failed"
+	} else if !reviewResult.Passed {
+		outcome = "advisory"
+	}
+	status.Sprints[idx].Audit = &agent.AuditStatus{
+		Cycles:     reviewResult.Iterations,
+		Findings:   reviewResult.SeverityCounts,
+		Outcome:    outcome,
+		Complexity: string(reviewResult.Complexity),
+	}
+	if reviewResult.Blocking {
+		status.Sprints[idx].Status = fmt.Sprintf("FAIL (review: %s)", reviewResult.MaxSeverity)
+	}
+}
+
+func updateBuildStatusCodeReviewProgress(status *agent.BuildStatus, sprintNum int, progress codereview.ReviewProgress) {
+	if status == nil {
+		return
+	}
+	idx := findSprintStatusIndex(status, sprintNum)
+	if idx < 0 {
+		return
+	}
+	status.Sprints[idx].Audit = &agent.AuditStatus{
+		Findings:   progress.Findings,
+		Outcome:    "running",
+		Active:     true,
+		Stage:      progress.Stage,
+		Complexity: string(progress.Complexity),
+	}
 }
 
 func writeValidationChecklistArtifact(projectDir string, checklist []audit.ValidationItem) error {

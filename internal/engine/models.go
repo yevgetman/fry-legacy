@@ -48,6 +48,8 @@ const (
 	SessionCodebaseScan      SessionType = "codebase-scan"
 	SessionCodebaseMemory    SessionType = "codebase-memory"
 	SessionCopilot           SessionType = "copilot"
+	SessionCodeReview        SessionType = "code-review"
+	SessionBuildReview       SessionType = "build-review"
 )
 
 // Tier-to-model mapping tables.
@@ -211,6 +213,9 @@ func TierForSession(engineName, effort string, session SessionType) ModelTier {
 		return TierStandard
 
 	case SessionAudit, SessionAuditVerify, SessionBuildAudit:
+		return auditTier(engineName, e)
+
+	case SessionCodeReview, SessionBuildReview:
 		return auditTier(engineName, e)
 
 	case SessionBuildSummary:

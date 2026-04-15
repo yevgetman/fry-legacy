@@ -286,11 +286,11 @@ func WriteEpicFile(path string, ep *epic.Epic) error {
 	if ep.MaxFailPercent > 0 && ep.MaxFailPercent != config.DefaultMaxFailPercent {
 		fmt.Fprintf(&b, "@max_fail_percent %d\n", ep.MaxFailPercent)
 	}
-	if ep.AuditAfterSprint && ep.MaxAuditIterationsSet && ep.MaxAuditIterations > 0 {
-		fmt.Fprintf(&b, "@max_audit_iterations %d\n", ep.MaxAuditIterations)
+	if ep.ReviewAfterSprint && ep.MaxReviewIterationsSet && ep.MaxReviewIterations > 0 {
+		fmt.Fprintf(&b, "@max_review_iterations %d\n", ep.MaxReviewIterations)
 	}
-	if !ep.AuditAfterSprint {
-		b.WriteString("@no_audit\n")
+	if !ep.ReviewAfterSprint {
+		b.WriteString("@no_review\n")
 	}
 	b.WriteString("\n")
 
