@@ -141,6 +141,7 @@ fry/
 │   │   ├── collector.go         # Programmatic build state collection from .fry/ artifacts
 │   │   ├── report.go            # BuildState → human-readable markdown report
 │   │   └── analyzer.go          # LLM analysis agent for resume decisions
+│   ├── finalize/finalize.go     # End-of-build cleanup: archive .fry/, git strategy teardown (worktree merge/branch restore), steering cleanup
 │   ├── summary/summary.go       # AI-generated build summary
 │   ├── consciousness/
 │   │   ├── identity.go          # Identity loading (JSON-first, .md fallback): LoadCoreIdentity, LoadDisposition, LoadFullIdentity
