@@ -107,6 +107,23 @@ func TestCompactMemories_NoEngine(t *testing.T) {
 	assert.Contains(t, err.Error(), "engine is required")
 }
 
+func TestCompactMemories_ReadDirError(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	memoriesDir := filepath.Join(dir, config.CodebaseMemoriesDir)
+	// Create parent directories so the memories path can be a regular file.
+	require.NoError(t, os.MkdirAll(filepath.Dir(memoriesDir), 0o755))
+	// Place a regular file where the directory should be — os.ReadDir will
+	// return a non-NotExist error (ENOTDIR on most platforms).
+	require.NoError(t, os.WriteFile(memoriesDir, []byte("not a dir"), 0o644))
+
+	eng := &compactStubEngine{output: "ignored"}
+	err := CompactMemories(context.Background(), dir, eng, "haiku", "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "compact memories")
+}
+
 func TestNeedsCompaction(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

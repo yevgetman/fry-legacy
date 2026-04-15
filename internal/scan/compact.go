@@ -61,7 +61,10 @@ func CompactMemories(ctx context.Context, projectDir string, eng engine.Engine, 
 	}
 
 	// Remove all existing memory files.
-	entries, _ := os.ReadDir(memoriesDir)
+	entries, err := os.ReadDir(memoriesDir)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("compact memories: list dir: %w", err)
+	}
 	for _, e := range entries {
 		if strings.HasSuffix(e.Name(), ".md") {
 			_ = os.Remove(filepath.Join(memoriesDir, e.Name()))
