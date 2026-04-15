@@ -149,6 +149,30 @@ func TestWatchProjectsForNewSessionTimesOut(t *testing.T) {
 	assert.Contains(t, err.Error(), "timed out")
 }
 
+func TestProbeClaudeCapabilities_UnexpectedOutput(t *testing.T) {
+	// Cannot use t.Parallel() — t.Setenv (required for PATH injection to
+	// provide a fake "claude" binary) is incompatible with t.Parallel() in Go.
+
+	// Create a fake "claude" script that emits unexpected garbage output.
+	tmpBin := t.TempDir()
+	scriptPath := filepath.Join(tmpBin, "claude")
+	err := os.WriteFile(scriptPath, []byte("#!/bin/sh\necho \"unexpected garbage output xyz 999\"\nexit 0\n"), 0o755)
+	require.NoError(t, err)
+
+	// Prepend fake binary directory to PATH so ProbeClaudeCapabilities finds it.
+	t.Setenv("PATH", tmpBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	// Must not panic; all capability flags should be false (safe defaults).
+	var result EngineProbeResult
+	require.NotPanics(t, func() {
+		result = ProbeClaudeCapabilities()
+	})
+
+	assert.Equal(t, "claude", result.Engine)
+	assert.False(t, result.SessionIDFlag, "unexpected output should not set SessionIDFlag")
+	assert.False(t, result.OutputJSON, "unexpected output should not set OutputJSON")
+}
+
 func TestWatchProjectsIgnoresOldFiles(t *testing.T) {
 	t.Parallel()
 
