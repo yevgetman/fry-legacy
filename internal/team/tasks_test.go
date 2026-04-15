@@ -225,7 +225,7 @@ func TestPause_SetsStatusPaused(t *testing.T) {
 }
 
 func TestShutdown_SetsStatusShutdown(t *testing.T) {
-	t.Parallel()
+	// Not parallel: mutates package-level DefaultTmux.
 	dir := t.TempDir()
 	teamID := "shutdown-team"
 

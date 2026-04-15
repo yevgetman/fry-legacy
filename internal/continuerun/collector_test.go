@@ -596,8 +596,7 @@ func TestCollectBuildState_SentinelStatError(t *testing.T) {
 }
 
 func TestCollectBuildState_SentinelStatPermissionError(t *testing.T) {
-	t.Parallel()
-
+	// Not parallel: mutates os.Stderr to capture warning output.
 	if os.Getuid() == 0 {
 		t.Skip("test requires non-root user (root bypasses permission checks)")
 	}
