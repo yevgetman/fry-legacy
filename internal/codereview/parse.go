@@ -20,6 +20,14 @@ var (
 
 	locationHashLineRe  = regexp.MustCompile(`(?i)#l\d+(?:c\d+)?$`)
 	locationColonLineRe = regexp.MustCompile(`:\d+(?::\d+)?$`)
+
+	// Review metadata regexes.
+	iterationsRe   = regexp.MustCompile(`(?im)^-?\s*Iterations\s+completed:\s*(\d+)`)
+	convergenceRe  = regexp.MustCompile(`(?im)^-?\s*Convergence:\s*(CONVERGED|ITERATION_LIMIT)`)
+	passHeaderRe   = regexp.MustCompile(`(?im)^###\s+Pass\s+(\d+)`)
+	passFoundRe    = regexp.MustCompile(`(?im)^Found:\s*(.+)`)
+	passFixedRe    = regexp.MustCompile(`(?im)^Fixed:\s*(.+)`)
+	passSevCountRe = regexp.MustCompile(`(\d+)\s+(CRITICAL|HIGH|MODERATE|LOW)`)
 )
 
 var severityOrder = []string{"CRITICAL", "HIGH", "MODERATE", "LOW"}
@@ -197,4 +205,135 @@ func looksLikeFilePath(s string) bool {
 		}
 	}
 	return true
+}
+
+// parseReviewMetadata extracts the structured metadata section from the review
+// output. Returns nil if the metadata section is absent or unparseable.
+func parseReviewMetadata(content string) *ReviewMetadata {
+	iterMatch := iterationsRe.FindStringSubmatch(content)
+	convMatch := convergenceRe.FindStringSubmatch(content)
+
+	if len(iterMatch) < 2 && len(convMatch) < 2 {
+		return nil
+	}
+
+	meta := &ReviewMetadata{}
+	if len(iterMatch) >= 2 {
+		meta.IterationsCompleted = atoiParse(iterMatch[1])
+	}
+	if len(convMatch) >= 2 {
+		meta.Convergence = ConvergenceStatus(convMatch[1])
+	}
+	meta.History = parseReviewHistory(content)
+	return meta
+}
+
+// parseReviewHistory extracts per-pass Found/Fixed counts from the Review
+// History section.
+func parseReviewHistory(content string) []ReviewPass {
+	passMatches := passHeaderRe.FindAllStringSubmatchIndex(content, -1)
+	if len(passMatches) == 0 {
+		return nil
+	}
+
+	var passes []ReviewPass
+	for i, match := range passMatches {
+		end := len(content)
+		if i+1 < len(passMatches) {
+			end = passMatches[i+1][0]
+		}
+		section := content[match[0]:end]
+		passNum := atoiParse(content[match[2]:match[3]])
+
+		pass := ReviewPass{
+			PassNumber:  passNum,
+			FoundCounts: make(map[string]int),
+			FixedCounts: make(map[string]int),
+		}
+
+		if m := passFoundRe.FindStringSubmatch(section); len(m) >= 2 {
+			pass.FoundCounts = parseSeverityCounts(m[1])
+		}
+		if m := passFixedRe.FindStringSubmatch(section); len(m) >= 2 {
+			pass.FixedCounts = parseSeverityCounts(m[1])
+		}
+
+		passes = append(passes, pass)
+	}
+	return passes
+}
+
+// parseSeverityCounts extracts severity counts from a line like "2 CRITICAL, 1 HIGH, 0 MODERATE".
+func parseSeverityCounts(line string) map[string]int {
+	counts := make(map[string]int)
+	for _, m := range passSevCountRe.FindAllStringSubmatch(line, -1) {
+		if len(m) >= 3 {
+			counts[m[2]] = atoiParse(m[1])
+		}
+	}
+	return counts
+}
+
+// atoiParse is a simple non-negative integer parser.
+func atoiParse(s string) int {
+	n := 0
+	for _, r := range strings.TrimSpace(s) {
+		if r < '0' || r > '9' {
+			return n
+		}
+		n = n*10 + int(r-'0')
+	}
+	return n
+}
+
+// findingKey returns a normalized deduplication key for a finding.
+func findingKey(f Finding) string {
+	desc := normalizeFindingDescription(f.Description)
+	loc := normalizeFindingLocation(f.Location)
+	if loc == "" {
+		return desc
+	}
+	if desc == "" {
+		return loc
+	}
+	return loc + "::" + desc
+}
+
+// deduplicateFindings removes duplicate findings based on normalized
+// location+description keys. When duplicates exist, the higher severity is kept.
+func deduplicateFindings(findings []Finding) []Finding {
+	type entry struct {
+		index int
+		sev   string
+	}
+	seen := make(map[string]entry, len(findings))
+	for i, f := range findings {
+		key := findingKey(f)
+		if key == "" {
+			continue
+		}
+		if prev, exists := seen[key]; exists {
+			if severity.Rank(f.Severity) > severity.Rank(findings[prev.index].Severity) {
+				findings[prev.index].Severity = f.Severity
+			}
+		} else {
+			seen[key] = entry{index: i, sev: f.Severity}
+		}
+	}
+
+	deduped := make([]Finding, 0, len(seen))
+	emitted := make(map[string]struct{}, len(seen))
+	for _, f := range findings {
+		key := findingKey(f)
+		if key == "" {
+			deduped = append(deduped, f)
+			continue
+		}
+		if _, done := emitted[key]; done {
+			continue
+		}
+		emitted[key] = struct{}{}
+		deduped = append(deduped, f)
+	}
+	return deduped
 }

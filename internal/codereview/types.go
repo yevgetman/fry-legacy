@@ -33,16 +33,43 @@ type ReviewOpts struct {
 	Stdout     io.Writer
 }
 
+// ConvergenceStatus indicates whether the agent's review loop converged or hit
+// the iteration limit.
+type ConvergenceStatus string
+
+const (
+	ConvergenceConverged      ConvergenceStatus = "CONVERGED"
+	ConvergenceIterationLimit ConvergenceStatus = "ITERATION_LIMIT"
+)
+
+// ReviewPass captures what happened during a single review pass.
+type ReviewPass struct {
+	PassNumber  int            `json:"pass_number"`
+	FoundCounts map[string]int `json:"found_counts"` // severity -> count found this pass
+	FixedCounts map[string]int `json:"fixed_counts"` // severity -> count fixed this pass
+}
+
+// ReviewMetadata is the structured metadata the agent writes to the review
+// output file. It is nil when the agent omits the metadata section.
+type ReviewMetadata struct {
+	IterationsCompleted int               `json:"iterations_completed"`
+	Convergence         ConvergenceStatus `json:"convergence"`
+	History             []ReviewPass      `json:"history,omitempty"`
+}
+
 // ReviewResult is the outcome of RunCodeReview.
 type ReviewResult struct {
-	Passed         bool
-	Blocking       bool           // true when CRITICAL or HIGH issues remain
-	Iterations     int            // always 1 for single-session review
-	MaxSeverity    string         // highest severity among remaining findings
-	SeverityCounts map[string]int // count of findings per severity level
-	Findings       []Finding      // remaining findings after review
-	Complexity     ComplexityTier
-	Metrics        *ReviewMetrics
+	Passed          bool
+	Blocking        bool              // true when CRITICAL or HIGH issues remain
+	Iterations      int               // agent-reported iteration count, falls back to 1 if metadata absent
+	ConvergedCleanly bool             // true if the agent reported CONVERGED status
+	MaxSeverity     string            // highest severity among remaining findings
+	SeverityCounts  map[string]int    // count of findings per severity level
+	Findings        []Finding         // remaining findings after review (deduplicated)
+	Complexity      ComplexityTier
+	Metrics         *ReviewMetrics
+	Metadata        *ReviewMetadata   // parsed from agent output, nil if absent
+	Recovered       bool              // true if review output was recovered from transcript
 }
 
 // ReviewProgress describes the live state of a sprint review for status updates.

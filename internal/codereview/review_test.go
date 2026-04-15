@@ -61,7 +61,10 @@ func TestRunCodeReview_Pass(t *testing.T) {
 
 	assert.True(t, result.Passed)
 	assert.False(t, result.Blocking)
-	assert.Equal(t, 1, result.Iterations)
+	assert.Equal(t, 1, result.Iterations) // no metadata → fallback to 1
+	assert.False(t, result.ConvergedCleanly)
+	assert.Nil(t, result.Metadata)
+	assert.False(t, result.Recovered)
 	assert.Empty(t, result.Findings)
 }
 
@@ -115,6 +118,7 @@ func TestRunCodeReview_MissingFile(t *testing.T) {
 	// Recovery should extract findings from transcript
 	assert.False(t, result.Passed)
 	assert.True(t, result.Blocking)
+	assert.True(t, result.Recovered)
 }
 
 func TestRunCodeReview_Validation(t *testing.T) {
@@ -149,6 +153,10 @@ func TestBuildReviewPrompt(t *testing.T) {
 	assert.Contains(t, prompt, "EXIT CONDITION")
 	assert.Contains(t, prompt, "Maximum iterations: 3")
 	assert.Contains(t, prompt, ".fry/sprint-review.txt")
+	assert.Contains(t, prompt, "## Review Metadata")
+	assert.Contains(t, prompt, "Iterations completed:")
+	assert.Contains(t, prompt, "Convergence: CONVERGED | ITERATION_LIMIT")
+	assert.Contains(t, prompt, "## Review History")
 }
 
 func TestBuildReviewPrompt_WritingMode(t *testing.T) {
@@ -202,4 +210,90 @@ func TestRunCodeReview_EngineError(t *testing.T) {
 	_, err := RunCodeReview(context.Background(), baseOpts(dir, eng))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "engine error")
+}
+
+func TestRunCodeReview_WithMetadata(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	eng := &stubEngine{
+		reviewContent: "## Summary\nAll good after fixes.\n\n## Findings\nNone.\n\n## Verdict\nPASS\n\n" +
+			"## Review Metadata\n- Iterations completed: 3\n- Convergence: CONVERGED\n\n" +
+			"## Review History\n### Pass 1\nFound: 2 CRITICAL, 1 HIGH, 0 MODERATE, 0 LOW\nFixed: 2 CRITICAL, 1 HIGH, 0 MODERATE\n" +
+			"### Pass 2\nFound: 0 CRITICAL, 0 HIGH, 1 MODERATE, 0 LOW\nFixed: 0 CRITICAL, 0 HIGH, 1 MODERATE\n" +
+			"### Pass 3\nFound: 0 CRITICAL, 0 HIGH, 0 MODERATE, 1 LOW\nFixed: 0 CRITICAL, 0 HIGH, 0 MODERATE\n",
+	}
+	result, err := RunCodeReview(context.Background(), baseOpts(dir, eng))
+	require.NoError(t, err)
+
+	assert.True(t, result.Passed)
+	assert.Equal(t, 3, result.Iterations)
+	assert.True(t, result.ConvergedCleanly)
+	assert.False(t, result.Recovered)
+
+	require.NotNil(t, result.Metadata)
+	assert.Equal(t, 3, result.Metadata.IterationsCompleted)
+	assert.Equal(t, ConvergenceConverged, result.Metadata.Convergence)
+	require.Len(t, result.Metadata.History, 3)
+
+	assert.Equal(t, 1, result.Metadata.History[0].PassNumber)
+	assert.Equal(t, 2, result.Metadata.History[0].FoundCounts["CRITICAL"])
+	assert.Equal(t, 1, result.Metadata.History[0].FoundCounts["HIGH"])
+	assert.Equal(t, 2, result.Metadata.History[0].FixedCounts["CRITICAL"])
+}
+
+func TestRunCodeReview_IterationLimit(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	eng := &stubEngine{
+		reviewContent: "## Summary\nStill has issues.\n\n## Findings\n" +
+			"- **Location:** db.go:55\n- **Description:** Connection pool not closed on shutdown\n- **Severity:** HIGH\n\n" +
+			"## Verdict\nFAIL\n\n" +
+			"## Review Metadata\n- Iterations completed: 3\n- Convergence: ITERATION_LIMIT\n",
+	}
+	result, err := RunCodeReview(context.Background(), baseOpts(dir, eng))
+	require.NoError(t, err)
+
+	assert.False(t, result.Passed)
+	assert.True(t, result.Blocking)
+	assert.Equal(t, 3, result.Iterations)
+	assert.False(t, result.ConvergedCleanly)
+	require.NotNil(t, result.Metadata)
+	assert.Equal(t, ConvergenceIterationLimit, result.Metadata.Convergence)
+}
+
+func TestRunCodeReview_NoMetadata(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	// Old-format output with no metadata section
+	eng := &stubEngine{
+		reviewContent: "## Summary\nAll good.\n\n## Findings\nNone.\n\n## Verdict\nPASS\n",
+	}
+	result, err := RunCodeReview(context.Background(), baseOpts(dir, eng))
+	require.NoError(t, err)
+
+	assert.True(t, result.Passed)
+	assert.Equal(t, 1, result.Iterations) // graceful fallback
+	assert.False(t, result.ConvergedCleanly)
+	assert.Nil(t, result.Metadata)
+}
+
+func TestRunCodeReview_Dedup(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	eng := &stubEngine{
+		reviewContent: "## Summary\nDuplicate findings.\n\n## Findings\n" +
+			"- **Location:** api.go:10\n- **Description:** Missing null check\n- **Severity:** HIGH\n\n" +
+			"- **Location:** api.go:10\n- **Description:** Missing null check\n- **Severity:** MODERATE\n\n" +
+			"## Verdict\nFAIL\n",
+	}
+	result, err := RunCodeReview(context.Background(), baseOpts(dir, eng))
+	require.NoError(t, err)
+
+	// Duplicates should be merged, keeping the higher severity
+	require.Len(t, result.Findings, 1)
+	assert.Equal(t, "HIGH", result.Findings[0].Severity)
 }

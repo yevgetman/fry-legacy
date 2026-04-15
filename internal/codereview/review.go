@@ -90,7 +90,6 @@ func RunCodeReview(ctx context.Context, opts ReviewOpts) (*ReviewResult, error) 
 		fmt.Sprintf("sprint%d_review_%s.log", opts.Sprint.Number, time.Now().Format("20060102_150405")))
 
 	var logBuf bytes.Buffer
-	var stdout, stderr bytes.Buffer
 
 	runOpts := engine.RunOpts{
 		Model:            model,
@@ -127,7 +126,7 @@ func RunCodeReview(ctx context.Context, opts ReviewOpts) (*ReviewResult, error) 
 		Call: &CallMetric{
 			SessionType: engine.SessionCodeReview,
 			PromptBytes: len(prompt),
-			OutputBytes: len(output) + stdout.Len() + stderr.Len(),
+			OutputBytes: len(output),
 			DurationMs:  durationMs,
 			Model:       model,
 		},
@@ -138,7 +137,7 @@ func RunCodeReview(ctx context.Context, opts ReviewOpts) (*ReviewResult, error) 
 	}
 
 	// Read the review output file.
-	content, readErr := readReviewOutput(reviewFilePath, SprintReviewFile, opts.ProjectDir, output, logPath)
+	content, recovered, readErr := readReviewOutput(reviewFilePath, SprintReviewFile, opts.ProjectDir, output, logPath)
 	if readErr != nil {
 		frylog.Log("  REVIEW: WARNING: %v", readErr)
 		// If we can't read the output, treat as a blocking failure.
@@ -154,25 +153,45 @@ func RunCodeReview(ctx context.Context, opts ReviewOpts) (*ReviewResult, error) 
 			}},
 			Complexity: opts.Complexity,
 			Metrics:    metrics,
+			Recovered:  true,
 		}, nil
+	}
+	if recovered {
+		frylog.Log("  REVIEW: WARNING: review output was recovered from agent transcript")
 	}
 
 	// Parse findings from the final review output.
 	contentStr := string(content)
 	findings := parseFindings(contentStr)
+	findings = deduplicateFindings(findings)
 	severityCounts := countSeverities(findings)
 	maxSev := maxFindingSeverity(findings)
 	passed := isReviewPass(maxSev)
 	blocking := isBlockingSeverity(maxSev)
 
+	// Parse metadata (iteration tracking, convergence, review history).
+	metadata := parseReviewMetadata(contentStr)
+	iterations := 1
+	convergedCleanly := false
+	if metadata != nil {
+		if metadata.IterationsCompleted > 0 {
+			iterations = metadata.IterationsCompleted
+		}
+		convergedCleanly = metadata.Convergence == ConvergenceConverged
+	}
+
 	metrics.FinalFindingCount = len(findings)
 
+	if metadata != nil && metadata.Convergence == ConvergenceIterationLimit {
+		frylog.Log("  REVIEW: WARNING: agent hit iteration limit (%d); remaining findings may be unfixable", iterations)
+	}
+
 	if passed {
-		frylog.Log("  REVIEW: PASSED — no issues above LOW")
+		frylog.Log("  REVIEW: PASSED — no issues above LOW (iterations=%d)", iterations)
 	} else if blocking {
-		frylog.Log("  REVIEW: FAILED — %s remain", FormatCounts(severityCounts))
+		frylog.Log("  REVIEW: FAILED — %s remain (iterations=%d)", FormatCounts(severityCounts), iterations)
 	} else {
-		frylog.Log("  REVIEW: advisory — %s remain", FormatCounts(severityCounts))
+		frylog.Log("  REVIEW: advisory — %s remain (iterations=%d)", FormatCounts(severityCounts), iterations)
 	}
 
 	// Report final progress.
@@ -185,14 +204,17 @@ func RunCodeReview(ctx context.Context, opts ReviewOpts) (*ReviewResult, error) 
 	}
 
 	return &ReviewResult{
-		Passed:         passed,
-		Blocking:       blocking,
-		Iterations:     1,
-		MaxSeverity:    maxSev,
-		SeverityCounts: severityCounts,
-		Findings:       findings,
-		Complexity:     opts.Complexity,
-		Metrics:        metrics,
+		Passed:          passed,
+		Blocking:        blocking,
+		Iterations:      iterations,
+		ConvergedCleanly: convergedCleanly,
+		MaxSeverity:     maxSev,
+		SeverityCounts:  severityCounts,
+		Findings:        findings,
+		Complexity:      opts.Complexity,
+		Metrics:         metrics,
+		Metadata:        metadata,
+		Recovered:       recovered,
 	}, nil
 }
 

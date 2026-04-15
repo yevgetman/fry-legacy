@@ -199,6 +199,8 @@ func appendSelfLoopInstructions(b *strings.Builder, maxIterations int) {
 	b.WriteString("### Step 6 — Loop\n")
 	b.WriteString("Return to Step 1.\n\n")
 	fmt.Fprintf(b, "**Maximum iterations: %d.** If you reach this limit without meeting the exit condition, write remaining findings to `.fry/sprint-review.txt` and stop.\n\n", maxIterations)
+	b.WriteString("When you reach the exit condition (no findings above LOW), set Convergence to `CONVERGED` in the Review Metadata section.\n")
+	b.WriteString("If you exhaust all iterations without meeting the exit condition, set Convergence to `ITERATION_LIMIT`.\n\n")
 }
 
 func appendOutputFormat(b *strings.Builder) {
@@ -215,6 +217,17 @@ func appendOutputFormat(b *strings.Builder) {
 	b.WriteString("- **Category:** product_defect | environment_blocker | harness_blocker | external_dependency_blocker\n")
 	b.WriteString("- **Recommended Fix:** <how to fix>\n\n")
 	b.WriteString("## Verdict\n")
-	b.WriteString("PASS (no issues or all LOW) or FAIL (CRITICAL/HIGH/MODERATE found)\n")
+	b.WriteString("PASS (no issues or all LOW) or FAIL (CRITICAL/HIGH/MODERATE found)\n\n")
+	b.WriteString("## Review Metadata\n")
+	b.WriteString("- Iterations completed: <number of review passes performed>\n")
+	b.WriteString("- Convergence: CONVERGED | ITERATION_LIMIT\n\n")
+	b.WriteString("## Review History\n")
+	b.WriteString("### Pass 1\n")
+	b.WriteString("Found: <N> CRITICAL, <N> HIGH, <N> MODERATE, <N> LOW\n")
+	b.WriteString("Fixed: <N> CRITICAL, <N> HIGH, <N> MODERATE\n")
+	b.WriteString("### Pass 2\n")
+	b.WriteString("Found: <N> CRITICAL, <N> HIGH, <N> MODERATE, <N> LOW\n")
+	b.WriteString("Fixed: <N> CRITICAL, <N> HIGH, <N> MODERATE\n")
+	b.WriteString("(repeat for each pass performed)\n")
 	b.WriteString("```\n")
 }

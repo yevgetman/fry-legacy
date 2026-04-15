@@ -20,28 +20,32 @@ var (
 )
 
 // readReviewOutput reads .fry/sprint-review.txt, falling back to transcript recovery.
-func readReviewOutput(reviewFilePath, displayPath, projectDir, output, logPath string) ([]byte, error) {
+// The recovered return value is true when the output was reconstructed from agent
+// transcript rather than read from the expected file.
+func readReviewOutput(reviewFilePath, displayPath, projectDir, output, logPath string) ([]byte, bool, error) {
 	content, err := os.ReadFile(reviewFilePath)
 	if err == nil && strings.TrimSpace(string(content)) != "" {
-		return content, nil
+		return content, false, nil
 	}
 	if err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("read review output: %w", err)
+		return nil, false, fmt.Errorf("read review output: %w", err)
 	}
 
 	recovered, source := recoverReviewReport(displayPath, projectDir, output, logPath)
 	if recovered != "" {
 		if writeErr := writeFile(reviewFilePath, recovered); writeErr != nil {
-			return nil, fmt.Errorf("recover review: %w", writeErr)
+			return nil, false, fmt.Errorf("recover review: %w", writeErr)
 		}
-		frylog.Log("  REVIEW: recovered %s from %s", displayPath, source)
-		return []byte(recovered), nil
+		recoveredFindings := parseFindings(recovered)
+		frylog.Log("  REVIEW: recovered %s from %s (%d findings, max severity: %s)",
+			displayPath, source, len(recoveredFindings), maxFindingSeverity(recoveredFindings))
+		return []byte(recovered), true, nil
 	}
 
 	if err == nil {
-		return nil, fmt.Errorf("review agent wrote empty %s and no recoverable report was found in agent output", displayPath)
+		return nil, false, fmt.Errorf("review agent wrote empty %s and no recoverable report was found in agent output", displayPath)
 	}
-	return nil, fmt.Errorf("review agent did not write %s and no recoverable report was found in agent output", displayPath)
+	return nil, false, fmt.Errorf("review agent did not write %s and no recoverable report was found in agent output", displayPath)
 }
 
 func recoverReviewReport(displayPath, projectDir, output, logPath string) (content string, source string) {
@@ -59,21 +63,21 @@ func recoverReviewReport(displayPath, projectDir, output, logPath string) (conte
 		return "", ""
 	}
 
-	if findings := parseFindings(section); len(findings) > 0 {
+	if findings := parseFindings(section); recoveredFindingsPassQualityCheck(findings) {
 		return synthesizeReviewReport(
 			fmt.Sprintf("Recovered review report from agent output because the session did not write %s.", displayPath),
 			findings,
 		), "assistant response"
 	}
 
-	if findings := parseReviewStyleFindings(section, projectDir); len(findings) > 0 {
+	if findings := parseReviewStyleFindings(section, projectDir); recoveredFindingsPassQualityCheck(findings) {
 		return synthesizeReviewReport(
 			fmt.Sprintf("Recovered review findings from agent output because the session did not write %s.", displayPath),
 			findings,
 		), "review-style assistant response"
 	}
 
-	if findings := parseBracketedSeverityFindings(section); len(findings) > 0 {
+	if findings := parseBracketedSeverityFindings(section); recoveredFindingsPassQualityCheck(findings) {
 		return synthesizeReviewReport(
 			fmt.Sprintf("Recovered review findings from agent output because the session did not write %s.", displayPath),
 			findings,
@@ -244,7 +248,7 @@ func parseReviewStyleFindings(content, projectDir string) []Finding {
 			body = split[0]
 		}
 		description := sanitizeRecoveredField(stripMarkdownLinks(body))
-		if description == "" {
+		if len(description) < 15 {
 			continue
 		}
 
@@ -374,6 +378,21 @@ func splitBracketedDescription(raw string) (description, location string) {
 		}
 	}
 	return raw, ""
+}
+
+// recoveredFindingsPassQualityCheck returns true if the recovered findings are
+// substantive enough to trust. At least one finding must have a description of
+// 10 or more characters.
+func recoveredFindingsPassQualityCheck(findings []Finding) bool {
+	if len(findings) == 0 {
+		return false
+	}
+	for _, f := range findings {
+		if len(strings.TrimSpace(f.Description)) >= 10 {
+			return true
+		}
+	}
+	return false
 }
 
 func ensureTrailingNewline(value string) string {
