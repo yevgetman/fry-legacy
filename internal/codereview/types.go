@@ -1,8 +1,6 @@
 package codereview
 
 import (
-	"io"
-
 	"github.com/yevgetman/fry/internal/engine"
 	"github.com/yevgetman/fry/internal/epic"
 	tokenmetrics "github.com/yevgetman/fry/internal/metrics"
@@ -28,9 +26,7 @@ type ReviewOpts struct {
 	GitDiff    string
 	DiffFn     func() (string, error)
 	ProgressFn func(ReviewProgress)
-	Verbose    bool
 	Mode       string
-	Stdout     io.Writer
 }
 
 // ConvergenceStatus indicates whether the agent's review loop converged or hit

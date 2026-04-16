@@ -19,6 +19,11 @@ var (
 	explicitPassRe            = regexp.MustCompile(`(?is)\bverdict\b.{0,40}\bpass\b|\bno findings\b|\bno issues (?:were )?found\b|\bno issues remain\b`)
 )
 
+// maxRecoveryInputBytes caps the transcript size fed to recovery parsers. This
+// is a defensive limit for an already-anomalous code path where the agent
+// failed to produce its structured output file.
+const maxRecoveryInputBytes = 500_000
+
 // readReviewOutput reads .fry/sprint-review.txt, falling back to transcript recovery.
 // The recovered return value is true when the output was reconstructed from agent
 // transcript rather than read from the expected file.
@@ -95,17 +100,17 @@ func recoverReviewReport(displayPath, projectDir, output, logPath string) (conte
 }
 
 func agentTranscript(output, logPath string) string {
-	if transcript := normalizeAgentTranscript(output); transcript != "" {
-		return transcript
+	transcript := normalizeAgentTranscript(output)
+	if transcript == "" && logPath != "" {
+		if data, err := os.ReadFile(logPath); err == nil {
+			transcript = normalizeAgentTranscript(string(data))
+		}
 	}
-	if logPath == "" {
-		return ""
+	if len(transcript) > maxRecoveryInputBytes {
+		frylog.Log("  REVIEW: WARNING: recovery input truncated from %d to %d bytes", len(transcript), maxRecoveryInputBytes)
+		transcript = transcript[:maxRecoveryInputBytes]
 	}
-	data, err := os.ReadFile(logPath)
-	if err != nil {
-		return ""
-	}
-	return normalizeAgentTranscript(string(data))
+	return transcript
 }
 
 func normalizeAgentTranscript(raw string) string {
@@ -160,6 +165,10 @@ func normalizeCodexTranscript(raw string) string {
 	return "assistant\n" + strings.Join(messages, "\n\n")
 }
 
+// extractLastAssistantSection returns the last assistant or codex section in
+// the transcript. If no such marker is found, it returns an empty string —
+// recovery only parses content explicitly identified as the agent's response,
+// not arbitrary input that might contain misleading severity keywords.
 func extractLastAssistantSection(raw string) string {
 	bestIdx := -1
 	bestLen := 0
@@ -177,7 +186,7 @@ func extractLastAssistantSection(raw string) string {
 			return strings.TrimSpace(strings.TrimPrefix(raw, prefix))
 		}
 	}
-	return strings.TrimSpace(raw)
+	return ""
 }
 
 func extractLastFileDiffContent(raw, displayPath string) string {

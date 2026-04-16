@@ -1267,8 +1267,7 @@ var runCmd = &cobra.Command{
 							updateBuildStatusCodeReviewProgress(buildStatus, spr.Number, progress)
 							writeCurrentBuildStatus()
 						},
-						Verbose: frlog.Verbose,
-						Mode:    modeStr,
+						Mode: modeStr,
 					})
 					if err != nil {
 						var exitReq *steering.ExitRequestError

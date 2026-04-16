@@ -101,33 +101,6 @@ func TestParseFindings(t *testing.T) {
 	}
 }
 
-func TestParseReviewSeverity(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		content  string
-		expected string
-	}{
-		{"## Findings\n- **Severity:** CRITICAL\n", "CRITICAL"},
-		{"Severity: HIGH\nSeverity: MODERATE\n", "HIGH"},
-		{"- **Severity:** MODERATE\nedge case\n", "MODERATE"},
-		{"- **Severity:** LOW\nstyle issue\n", "LOW"},
-		{"## Verdict\nPASS\n", ""},
-		{"No issues found.", ""},
-		{"CRITICAL bug found here", ""},
-		{"This is HIGH priority work", ""},
-		{"- **Severity:** LOW\n- **Severity:** HIGH\n- **Severity:** MODERATE\n", "HIGH"},
-		{"Severity: CRITICAL\nSeverity: LOW\n", "CRITICAL"},
-		{"**Severity:** LOW — HIGHLY unusual but cosmetic\n", "LOW"},
-		{"**Severity:** LOW — HIGHLIGHTED concern\n", "LOW"},
-		{"**Severity:** LOW — CRITICALLY important style\n", "LOW"},
-		{"**Severity:** MODERATE — ALLOW this pattern\n", "MODERATE"},
-	}
-	for _, tt := range tests {
-		assert.Equal(t, tt.expected, parseReviewSeverity(tt.content), "content: %q", tt.content)
-	}
-}
-
 func TestIsReviewPass(t *testing.T) {
 	t.Parallel()
 

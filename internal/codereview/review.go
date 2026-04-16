@@ -101,7 +101,9 @@ func RunCodeReview(ctx context.Context, opts ReviewOpts) (*ReviewResult, error) 
 
 	// Set up log writers.
 	logFile, logErr := os.Create(logPath)
-	if logErr == nil {
+	if logErr != nil {
+		frylog.Log("  REVIEW: WARNING: could not create log file %s: %v", logPath, logErr)
+	} else {
 		defer logFile.Close()
 		runOpts.Stdout = &logBuf
 		runOpts.Stderr = &logBuf
@@ -112,12 +114,19 @@ func RunCodeReview(ctx context.Context, opts ReviewOpts) (*ReviewResult, error) 
 
 	// Single engine call — the agent self-loops internally.
 	start := time.Now()
-	output, _, runErr := opts.Engine.Run(ctx, invocation, runOpts)
+	output, exitCode, runErr := opts.Engine.Run(ctx, invocation, runOpts)
 	durationMs := time.Since(start).Milliseconds()
 
 	// Flush log buffer to file.
 	if logFile != nil {
-		_, _ = logFile.Write(logBuf.Bytes())
+		if _, writeErr := logFile.Write(logBuf.Bytes()); writeErr != nil {
+			frylog.Log("  REVIEW: WARNING: could not write log file %s: %v", logPath, writeErr)
+		}
+	}
+
+	// Warn on non-zero engine exit even when no error was returned.
+	if runErr == nil && exitCode != 0 {
+		frylog.Log("  REVIEW: WARNING: engine returned exit code %d without error", exitCode)
 	}
 
 	// Capture metrics.

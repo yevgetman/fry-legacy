@@ -94,27 +94,6 @@ func parseFindings(content string) []Finding {
 	return findings
 }
 
-func parseReviewSeverity(content string) string {
-	maxSev := ""
-	for _, line := range strings.Split(content, "\n") {
-		if !severityLabelRe.MatchString(line) {
-			continue
-		}
-		upper := strings.ToUpper(line)
-		m := severityWordRe.FindString(upper)
-		if m == "" {
-			continue
-		}
-		if severity.Rank(m) > severity.Rank(maxSev) {
-			maxSev = m
-		}
-		if maxSev == "CRITICAL" {
-			return "CRITICAL"
-		}
-	}
-	return maxSev
-}
-
 func countSeverities(findings []Finding) map[string]int {
 	counts := make(map[string]int)
 	for _, f := range findings {
@@ -300,29 +279,25 @@ func findingKey(f Finding) string {
 }
 
 // deduplicateFindings removes duplicate findings based on normalized
-// location+description keys. When duplicates exist, the higher severity is kept.
+// location+description keys. When duplicates exist, the higher severity is
+// retained. The input slice is not modified.
 func deduplicateFindings(findings []Finding) []Finding {
-	type entry struct {
-		index int
-		sev   string
-	}
-	seen := make(map[string]entry, len(findings))
-	for i, f := range findings {
+	// First pass: compute the winning severity for each key.
+	winningSeverity := make(map[string]string, len(findings))
+	for _, f := range findings {
 		key := findingKey(f)
 		if key == "" {
 			continue
 		}
-		if prev, exists := seen[key]; exists {
-			if severity.Rank(f.Severity) > severity.Rank(findings[prev.index].Severity) {
-				findings[prev.index].Severity = f.Severity
-			}
-		} else {
-			seen[key] = entry{index: i, sev: f.Severity}
+		if existing, ok := winningSeverity[key]; !ok || severity.Rank(f.Severity) > severity.Rank(existing) {
+			winningSeverity[key] = f.Severity
 		}
 	}
 
-	deduped := make([]Finding, 0, len(seen))
-	emitted := make(map[string]struct{}, len(seen))
+	// Second pass: emit each key once (first occurrence), in input order,
+	// applying the winning severity. Findings with empty keys pass through.
+	deduped := make([]Finding, 0, len(findings))
+	emitted := make(map[string]struct{}, len(winningSeverity))
 	for _, f := range findings {
 		key := findingKey(f)
 		if key == "" {
@@ -333,6 +308,9 @@ func deduplicateFindings(findings []Finding) []Finding {
 			continue
 		}
 		emitted[key] = struct{}{}
+		if winner, ok := winningSeverity[key]; ok {
+			f.Severity = winner
+		}
 		deduped = append(deduped, f)
 	}
 	return deduped
