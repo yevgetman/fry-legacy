@@ -264,9 +264,9 @@ When all checks already pass on resume:
 [2026-03-10 12:00:01] SPRINT 4 RESUME PASS (1s)
 ```
 
-## Sprint Audit
+## Sprint Code Review
 
-Sprint audits run by default after each sprint passes sanity checks. The audit uses a two-level loop: outer audit cycles discover issues, inner fix loops resolve them.
+Sprint code reviews run by default after each sprint passes sanity checks. A single agent session reviews the sprint's changes, fixes issues above LOW severity, and re-reviews until clean.
 
 ### Clean audit (no issues):
 ```

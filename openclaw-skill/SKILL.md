@@ -203,7 +203,7 @@ fry init --force --project-dir /path/to/project  # Force re-index
 **Pipeline integration:** When `.fry-config/codebase.md` exists, it is automatically used
 throughout the build pipeline:
 - **Sprint prompts:** Injected as Layer 0.5 (CODEBASE CONTEXT) before executive context
-- **Sprint audit/fix/build-audit prompts:** Included as architecture and conventions context during audit remediation
+- **Sprint code review / build-audit prompts:** Included as architecture and conventions context during review and remediation
 - **Prepare pipeline:** Included in plan, epic, and sanity check generation
 - **Triage:** Included in complexity classification
 - **File index:** Auto-refreshed on each `fry run` if stale (newer git commits exist)
@@ -650,29 +650,21 @@ Before the sprint loop begins, Fry runs **harness self-validation** on all sanit
 When checks fail, Fry runs an alignment loop to auto-fix. If alignment stalls,
 the sprint may pass with deferred failures (below `@max_fail_percent` threshold).
 
-### Sprint audit
+### Sprint code review
 
-After each sprint (standard effort and above), Fry runs a semantic audit:
+After each sprint (standard effort and above), Fry runs a single-session code review:
 
-- **CRITICAL/HIGH** findings block the sprint — Fry attempts auto-fix.
-- **MODERATE** findings get one fix attempt.
-- **LOW** findings are advisory (non-blocking except at high/max effort).
-- **Complexity-aware budgets:** Fry classifies the sprint diff as low, moderate, or high complexity and adjusts audit/fix loop caps and prompt emphasis accordingly.
-- **No-op skip:** If an audit-fix pass makes no real file changes, Fry skips verify and treats the attempt as stale progress.
-- **Fix history:** Later fix iterations receive a concise history of earlier failed attempts against the same findings.
-- **Remediation clustering:** Before each fix pass, Fry groups related findings into coherent remediation clusters using shared file families, subsystem paths, and requirement-theme overlap. Each fix call targets one cluster with a unified prompt carrying full audit context (codebase, diff, progress, resolved themes) alongside per-cluster fix instructions and inline target files, while verify still checks issue IDs one-by-one.
-- **Behavior-unchanged verify outcomes:** Verify can report `BEHAVIOR_UNCHANGED` when a remediation left the executable code path untouched. Fry threads that signal into the next fix prompt with issue-specific guidance, explicitly forbids comment-only/rationale-only follow-ups, and can narrow the batch or stop early if the same issue repeats unchanged.
-- **Unchanged-code churn suppression:** Fry fingerprints finding-related file state across cycles. If the auditor re-raises the same issue family against unchanged code, Fry merges it back into the existing active issue or suppresses the reopening unless the finding includes explicit `**New Evidence:**`.
-- **Blocker separation:** Fry distinguishes `product_defect` findings from `environment_blocker`, `harness_blocker`, and `external_dependency_blocker` findings. Blocker findings stay out of the normal code-fix loop and are surfaced as blocked audit outcomes with preserved blocker details.
-- **Budgeted session continuity:** On Claude and Codex, audit-to-audit and fix-to-fix calls reuse same-role sessions until per-role call, prompt-size, token, or carry-forward budgets are exceeded. Fry then refreshes the session and prepends a compact carry-forward summary so the audit can continue without dragging unbounded context forward.
-- **Yield-aware stop rules:** Fry records per-cycle productivity and trailing yield. When progress-based audit cycles keep producing weak fix/verify returns, Fry refreshes context, limits the next cycle to a single issue, and can stop with an explicit low-yield reason instead of burning more cycles in the same mode.
-- **Strategy governor:** Fry records named reactions when health thresholds trip during audit, including batch narrowing for high no-op rates, fix-session refresh on repeated `BEHAVIOR_UNCHANGED` outcomes, and audit-session refresh when token burn or cache pressure spikes.
-- When `.fry-config/codebase.md` exists, the audit, fix, and build-audit prompts use it as ground-truth architecture context.
-- Relevant intentional divergences from `.fry/deviation-log.md` are injected into audit prompts so the auditor does not flag accepted design differences as defects.
-- If the agent forgets to write `.fry/sprint-audit.txt`, Fry attempts to recover a structured report from the agent's final stdout/log output before failing the audit.
-- **Reopen detection:** If a previously resolved finding is re-raised under different wording (same file family and similar description), Fry suppresses it as a probable reopening rather than treating it as new. Unchanged-code reopenings must include explicit `**New Evidence:**` or they are suppressed as churn; severity escalation only bypasses suppression when the artifact fingerprint changed (a real regression). Suppressed reopenings are logged and shown in the monitor dashboard.
-- **Session continuity:** Verify remains stateless even when audit and fix sessions are being reused or refreshed.
-- Fry writes per-sprint audit metrics to `.fry/build-logs/sprintN_audit_metrics.json`, including churn counters, cache-read/cache-creation token detail, per-cycle productivity summaries, trailing yield, low-yield strategy/stop metadata, and same-role session refresh counts.
+- A single agent session reviews the sprint's changes, classifies issues by severity, fixes everything above LOW, and re-reviews until clean — all within one uninterrupted session.
+- **CRITICAL/HIGH** findings block the sprint.
+- **MODERATE** findings are advisory (non-blocking).
+- **LOW** findings are accepted as-is.
+- **Complexity classification:** Fry classifies the sprint diff as low, moderate, or high complexity. Moderate and high complexity sprints receive an additional figure reconciliation check.
+- **Iteration tracking:** The agent reports how many review passes it performed and whether it converged (exit condition met) or hit the iteration limit.
+- **Finding deduplication:** Findings are deduplicated by normalized location + description. When duplicates exist, the higher severity is kept.
+- When `.fry-config/codebase.md` exists, the review prompt uses it as ground-truth architecture context.
+- Relevant intentional divergences from `.fry/deviation-log.md` are injected into review prompts so the reviewer does not flag accepted design differences as defects.
+- If the agent forgets to write `.fry/sprint-review.txt`, Fry attempts to recover findings from the agent's transcript output (with a quality gate to prevent false positives).
+- Review metrics are written to `.fry/build-logs/sprintN_review_TIMESTAMP.log`.
 
 Read audit findings:
 
@@ -803,8 +795,8 @@ Implement the business logic layer...
 | `@model <name>` | Override agent model |
 | `@mcp_config <path>` | MCP server config (Claude only) |
 | `@review_between_sprints` | Enable sprint review |
-| `@audit_after_sprint` | Enable sprint audit (default) |
-| `@no_audit` | Disable all audits |
+| `@review_after_sprint` | Enable sprint code review (default) |
+| `@no_review` | Disable sprint code review |
 | `@max_heal_attempts <N>` | Alignment attempt limit |
 | `@max_fail_percent <N>` | Deferred failure threshold (default 20%) |
 | `@docker_from_sprint <N>` | Start Docker from sprint N |
@@ -1143,10 +1135,10 @@ Key event types: `sprint_start`, `sprint_complete`, `alignment_complete`,
 | `.fry/epic-progress.txt` | Compacted summaries of completed sprints |
 | `.fry/build-logs/` | Sprint, heal, and audit log files |
 | `.fry/build-report.json` | Structured build report (when `--json-report`) |
-| `.fry/build-status.json` | Machine-readable build status snapshot (updated every state change, including live sprint-audit progress) |
-| `.fry/sprint-audit.txt` | Current sprint audit findings (transient) |
+| `.fry/build-status.json` | Machine-readable build status snapshot (updated every state change, including live code review progress) |
+| `.fry/sprint-review.txt` | Current sprint code review findings (transient) |
 | `.fry/validation-checklist.md` | Deferred-failure validation checklist for build audit follow-up |
-| `.fry/sessions/` | Transient same-role audit session IDs (Claude/Codex only) |
+| `.fry/sessions/` | Transient session IDs (Claude/Codex only) |
 | `.fry/observer/events.jsonl` | Full event stream |
 | `.fry/deviation-log.md` | Sprint review deviation history |
 | `.fry/build-mode.txt` | Active build mode (software/planning/writing) |

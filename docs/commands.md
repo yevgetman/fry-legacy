@@ -351,7 +351,7 @@ fry exit [flags]
 
 - Writes a structured exit request to `.fry/exit-request.json`
 - The running build honors that request at the next safe checkpoint:
-  current sprint iteration, alignment attempt boundary, sprint-audit seam, sprint boundary after compaction (including holds and reviews), or the final build-audit/build-summary seam before finalization
+  current sprint iteration, alignment attempt boundary, sprint code review seam, sprint boundary after compaction (including holds and reviews), or the final build-audit/build-summary seam before finalization
 - When the request is settled, Fry writes `.fry/resume-point.json` with the exact phase, sprint, verdict, reason, and recommended resume command
 - `fry run --continue` and `fry run --simple-continue` read the structured resume point before falling back to artifact heuristics
 - On worktree builds, `fry exit` writes the request into the canonical worktree state directory automatically
@@ -622,7 +622,7 @@ fry init [flags]
 
 When `.fry-config/codebase.md` exists, it is automatically used by:
 - **Sprint prompts** — injected as Layer 0.5 (CODEBASE CONTEXT) before the project context
-- **Sprint audit/fix/build-audit prompts** — included as architecture and conventions context for audit remediation
+- **Sprint code review / build-audit prompts** — included as architecture and conventions context for review and remediation
 - **Prepare pipeline** — included in plan, epic, and sanity check generation so sprints are decomposed with awareness of existing code
 - **Triage classification** — included in complexity assessment to account for existing code patterns
 
@@ -717,7 +717,7 @@ Run 'fry run' to start a new build.
 
 ## `fry monitor`
 
-Real-time build monitoring with enriched event stream. Composes data from events, build status, sprint progress, build logs, and process liveness into a unified view. The dashboard view also shows live sprint-audit progress for the active sprint, including audit stage, cycle/fix counters, targeted issue counts, and compact issue headlines. See [Monitor](monitor.md) for full details.
+Real-time build monitoring with enriched event stream. Composes data from events, build status, sprint progress, build logs, and process liveness into a unified view. The dashboard view also shows live sprint code review progress for the active sprint, including review stage and finding counts. See [Monitor](monitor.md) for full details.
 
 ```
 fry monitor [project-dir] [flags]
@@ -771,7 +771,7 @@ Example output (`--verbose`):
 [10:31:44]  +31m44s  *observer_wake            log=observer_after_sprint_20260331_103144.log wake=after_sprint
 ```
 
-Example output (`--dashboard` during sprint audit):
+Example output (`--dashboard` during sprint code review):
 
 ```
 Fry Monitor                         PID 12345  10:27:18

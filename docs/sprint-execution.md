@@ -20,7 +20,7 @@ FOR each sprint in range:
   │   └─ Continue until: promise found OR no-op+verified OR max iterations
   ├─ Run sanity checks
   ├─ If checks fail: enter alignment loop
-  ├─ Sprint audit: audit→fix loop (CRITICAL/HIGH block; MODERATE advisory)
+  ├─ Sprint code review: single-session review→fix loop (CRITICAL/HIGH block; MODERATE advisory)
   ├─ Git checkpoint
   ├─ Compact progress
   └─ Sprint review (if enabled)
@@ -66,7 +66,7 @@ The quality directive instructs the sprint agent to verify its own work before d
 
 The self-verification instruction tells the agent to run the project's build and test commands (e.g., `go build ./...`, `go test ./...`, `make build`, `npm test`) and fix any failures before outputting the promise token. For writing-mode builds, the agent is instead told to re-read its output and fix issues.
 
-This reduces the burden on downstream quality gates (alignment loop, sprint audit) by catching mechanical failures — compilation errors, test regressions, obvious mistakes — while the agent still has full context.
+This reduces the burden on downstream quality gates (alignment loop, sprint code review) by catching mechanical failures — compilation errors, test regressions, obvious mistakes — while the agent still has full context.
 
 **Note:** Supplementary assets (`assets/` directory) are **not** included in sprint prompts. Their contents are injected only during `fry prepare` and baked into `plans/plan.md` and `.fry/epic.md`. See [Supplementary Assets](supplementary-assets.md).
 
@@ -126,7 +126,7 @@ After each sprint completes, progress is compacted:
 | `PASS (aligned, deferred failures)` | Aligned with remaining failures within threshold — deferred to build audit |
 | `FAIL (sanity checks failed, alignment exhausted)` | All alignment attempts exhausted |
 | `FAIL (no promise, sanity checks failed, alignment exhausted)` | No promise + alignment failed |
-| `FAIL (audit: SEVERITY)` | Sprint audit found blocking CRITICAL or HIGH issues after all audit cycles |
+| `FAIL (review: SEVERITY)` | Sprint code review found blocking CRITICAL or HIGH issues after all review iterations |
 | `FAIL (no promise after N iters)` | No promise token found and no sanity checks exist |
 | `FAIL (no prompt)` | Sprint had no prompt text |
 | `PAUSED` | Build paused via `fry exit` at a safe checkpoint |
@@ -232,7 +232,7 @@ Safe checkpoints are:
 
 - End of the current sprint iteration
 - Alignment attempt boundaries
-- Sprint-audit seams between audit, fix, and verify passes
+- Sprint code review seams (before and after the review session)
 - Sprint boundaries after checkpoint + compaction, including hold/review seams before the next sprint
 - The build-audit/build-summary seam before final build finalization
 

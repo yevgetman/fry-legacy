@@ -1,6 +1,6 @@
-# Sprint Audit
+# Sprint Code Review
 
-The sprint audit is a semantic quality gate that runs after each sprint passes sanity checks. It uses a two-level loop: an outer loop discovers issues via fresh audit scans, and an inner loop fixes and verifies them before the next scan. Issues are tracked across cycles and prioritized FIFO (oldest first). The fix agent receives all findings at once with full context. There is no mechanical scope validation — the audit agent (AI) verifies whether fixes are adequate, not a file-path matching rule. This complements the syntactic sanity check system (`@check_file`, `@check_cmd`, etc.) with deeper, AI-driven review.
+The sprint code review is a semantic quality gate that runs after each sprint passes sanity checks. A single AI agent session reviews the sprint's changes, classifies issues by severity, fixes everything above LOW, and re-reviews until clean — all within one uninterrupted session. This eliminates the context handoff overhead of the multi-agent pattern and gives the reviewing agent full continuity across review and fix passes. This complements the syntactic sanity check system (`@check_file`, `@check_cmd`, etc.) with deeper, AI-driven review.
 
 ## How It Works
 
@@ -8,168 +8,130 @@ The sprint audit is a semantic quality gate that runs after each sprint passes s
 Sprint passes sanity checks
        │
        ▼
-  Outer loop cycle 1 — FRESH AUDIT SCAN
-       │
-       ├─ Audit agent reviews codebase (read-only)
-       │       │
-       │       ├─ PASS (no MODERATE+ issues) → continue to git checkpoint
-       │       │
-       │       └─ FAIL (CRITICAL/HIGH/MODERATE found)
-       │               │
-       │               ▼
-       │         Inner loop — FIX-THEN-VERIFY (FIFO, finding set frozen)
-       │               │
-       │               ├─ Fix agent receives ALL unresolved findings
-       │               ├─ Verify-audit agent checks ONLY the original findings
-       │               ├─ If all MODERATE+ resolved → exit inner loop
-       │               └─ Repeat up to inner cap
+  Classify sprint diff complexity (low/moderate/high)
        │
        ▼
-  Outer loop cycle 2 — FRESH AUDIT SCAN for NEW issues
+  Build review prompt with sprint context
        │
-       ├─ Classifies findings: resolved / persisting / new
-       │       │
-       │       ├─ Only LOWs remain → PASS
-       │       └─ New MODERATE+ found → inner fix loop again
+       ▼
+  Single agent session (one engine call)
        │
-       └─ Repeat until pass or outer cap reached
-               │
-               ├─ CRITICAL or HIGH → sprint FAILS, epic stops
-               └─ MODERATE → advisory warning, build continues
-
-  Final LOW pass (max effort only)
+       ├─── Pass 1: Review ────────────────────────┐
+       │  Read diff, apply review criteria           │
+       │  Classify findings: CRITICAL/HIGH/MOD/LOW   │
+       │  Write to .fry/sprint-review.txt            │
+       │  Exit check: nothing above LOW? → STOP      │
+       └────────────┬────────────────────────────────┘
+                    │ findings above LOW exist
+                    ▼
+       ┌─── Fix ────────────────────────────────────┐
+       │  Fix all CRITICAL/HIGH/MODERATE issues       │
+       │  Minimal targeted changes only               │
+       │  Do not touch LOW issues                     │
+       └────────────┬───────────────────────────────┘
+                    │
+                    ▼
+       ┌─── Pass 2+: Re-Review (Verification) ─────┐
+       │  Re-review codebase including fixes          │
+       │  Catch regressions introduced by fixes       │
+       │  Catch new issues exposed by fixes           │
+       │  Update .fry/sprint-review.txt               │
+       │  Exit check again                            │
+       └────────────┬───────────────────────────────┘
+                    │
+                    ▼
+       Pass N or Convergence
        │
-       └─ One fix attempt for remaining LOWs — non-blocking
+       ├─ CONVERGED: no issues above LOW → STOP
+       └─ ITERATION_LIMIT: max iterations reached → STOP
+              │
+              ▼
+       Final .fry/sprint-review.txt written with:
+       • Remaining findings
+       • Review history (per-pass found/fixed counts)
+       • Metadata (iterations, convergence status)
+       • Verdict
 ```
 
-The audit runs **after** sanity checks pass but **before** the git checkpoint, so that the checkpoint commits both the sprint's work and any audit fixes in one clean commit.
+The review runs **after** sanity checks pass but **before** the git checkpoint, so that the checkpoint commits both the sprint's work and any review fixes in one clean commit.
 
-## Two-Level Loop Design
+## Single-Session Design
 
-### Outer loop (fresh audit scans)
+The code review uses a **single agent session** that handles the full review-fix-verify cycle internally. The agent:
 
-Each outer cycle runs a **fresh audit agent** to scan the codebase for sprint-related issues. This is the **only** place where new issues are discovered.
+1. **Reviews** the sprint diff against mode-specific criteria
+2. **Classifies** every finding as CRITICAL, HIGH, MODERATE, or LOW
+3. **Reports** findings to `.fry/sprint-review.txt`
+4. **Checks** the exit condition — if no findings above LOW remain, stops
+5. **Fixes** all CRITICAL, HIGH, and MODERATE issues with minimal, targeted changes
+6. **Loops** back to step 1 to re-review (which serves as verification)
 
-On cycle 2+, findings are classified against the previous cycle's known set:
-- **Resolved** — previously known issue no longer found
-- **Persisting** — previously known issue still present (keeps original cycle number for FIFO ordering)
-- **New** — issue not seen in previous cycles
+The re-review pass acts as verification: it confirms fixes worked, catches regressions from fixes, and catches new issues exposed by the changes. This continues until convergence (nothing above LOW) or the iteration limit.
 
-A **resolved-finding ledger** tracks all resolved findings across the audit lifetime and is included in the audit prompt so the agent avoids re-raising fixed issues.
+### Why single-session
 
-### Inner loop (fix-then-verify per finding set)
+The previous multi-agent design (separate auditor → fixer → verifier) suffered from context loss during handoffs between sessions. The single-session approach gives the agent full continuity — it remembers what it found, what it fixed, and why, without needing compressed carry-forward summaries.
 
-When the outer loop discovers MODERATE+ findings, the inner loop works to resolve them:
+### Iteration tracking
 
-1. **Fix agent** receives ALL unresolved findings from the current finding set with full context (codebase description, sprint goals, progress, git diff, resolved themes, previous fix attempts). The fix agent is prompted to focus on sprint scope but is free to touch any files needed for the fix — there is no mechanical file-path restriction.
+The agent reports structured metadata in its output:
 
-2. **Verify-audit agent** checks ONLY the original finding set (FIFO discipline). It does not scan for new issues — that's the outer loop's job. It reports each finding as `RESOLVED`, `PARTIALLY_RESOLVED`, `BEHAVIOR_UNCHANGED`, `EVIDENCE_INCONCLUSIVE`, `BLOCKED`, or `STILL_PRESENT`.
+- **Iterations completed** — how many review passes were performed
+- **Convergence status** — `CONVERGED` (exit condition met) or `ITERATION_LIMIT` (max iterations exhausted)
+- **Review history** — per-pass breakdown of found and fixed counts by severity
 
-3. Resolved findings are removed from the set. If MODERATE+ remain, back to step 1.
+Fry parses this metadata to populate the review result. When metadata is absent (e.g., agent omitted it), Fry falls back gracefully.
 
-4. When all MODERATE+ findings in the set are resolved, the inner loop exits and the outer loop runs a fresh audit scan.
+### Finding deduplication
 
-**FIFO discipline:** The inner loop's finding set is frozen when it starts. New issues cannot be added mid-loop. Old issues are persistently addressed first. This prevents the churn pattern where new findings accumulate while old ones remain unresolved.
-
-### Inner-loop efficiency
-
-- **No-op detection** — Fry fingerprints the worktree before and after each fix pass. If the fix agent made no material file changes, Fry logs a no-op and increments the stale counter.
-- **Fix attempt history** — The fix prompt includes summaries of prior attempts that targeted the same findings, including verification notes. This helps the fix agent avoid repeating failed approaches.
-- **Behavior-unchanged handling** — If verify reports `BEHAVIOR_UNCHANGED` for a finding across 3+ iterations, the inner loop exits early to let the outer loop try a fresh perspective.
-- **Session continuity** — On Claude and Codex, Fry reuses same-role sessions within audit cycles (audit continuity across outer cycles, fix continuity within one inner loop). Sessions are refreshed when they exceed budgets:
-  - **Audit sessions:** 3 calls, 24KB prompts, 12K tokens, or 8 unresolved findings carried forward
-  - **Fix sessions:** 4 calls, 48KB prompts, 20K tokens, or 10 unresolved findings carried forward
-
-### Issue tracking across cycles
-
-Each finding has a stable identity:
-- **Finding key** — normalized file location plus description
-- **Affected files** — file targets derived from the finding location
-- **Origin cycle** — which outer audit cycle discovered it (for FIFO ordering)
-- **Last seen cycle** — the most recent audit cycle that observed it
-- **Resolution status** — whether it has been verified as resolved
-
-### Blocker categories
-
-Findings can be classified as:
-
-- `product_defect`
-- `environment_blocker`
-- `harness_blocker`
-- `external_dependency_blocker`
-
-Blocker categories are **informational only** — they help understand the nature of the finding but do not prevent the fix agent from attempting remediation. The fix loop still runs for all findings regardless of category.
-
-## Metrics and Status
-
-Sprint audit metrics track:
-
-- **Total calls** — audit, fix, and verify agent invocations
-- **Duration** — total wall-clock time spent in audit
-- **No-op fix calls** — fix calls that produced no file changes
-- **No-op rate** — proportion of fix calls that were no-ops
-- **Verify calls and resolutions** — how many verify passes ran and how many findings were confirmed resolved
-- **Verify yield** — resolutions per verify call
-- **Session refreshes** — how many times session continuity was reset
-- **Cycle summaries** — per-cycle snapshots with fix yield, verify yield, and milliseconds per resolution
-
-These are written to `.fry/build-logs/sprintN_audit_metrics.json` and surfaced in `.fry/build-status.json` under `sprints[].audit.metrics`.
+Findings are deduplicated by normalized location + description keys. When duplicates exist, the higher severity is kept. This prevents the same issue from being counted multiple times across review passes.
 
 ## Blocking vs Advisory
 
-After the audit loop exhausts its cycles, the outcome depends on the remaining findings:
+After the review session completes, the outcome depends on the remaining findings:
 
 - **CRITICAL or HIGH** — The sprint **fails** and the epic stops
-- **MODERATE** — The sprint **continues** with an advisory warning. This prevents moderate semantic disagreements from stalling the entire build.
-- **LOW or none** — The audit passes cleanly. At **max** effort, LOW-only findings trigger one fix agent attempt before accepting.
-
-## LOW-Only Exit Behavior
-
-When an audit finds only LOW-severity issues (no CRITICAL, HIGH, or MODERATE):
-
-| Effort | LOW-only result | Behavior |
-|---|---|---|
-| fast / standard / high | Immediate pass | No fix attempt; LOW findings are non-blocking |
-| max | Single fix attempt, then pass | One fix agent pass targets the LOW findings. No re-audit — the result is accepted regardless. |
+- **MODERATE** — The sprint **continues** with an advisory warning
+- **LOW or none** — The review passes cleanly
 
 ## Configuration
 
-Sprint audits are **enabled by default**.
+Sprint code reviews are **enabled by default**.
 
 ```
-@max_audit_iterations 5
-@audit_engine claude
-@audit_model claude-sonnet-4-20250514
+@max_review_iterations 5
+@review_engine claude
+@review_model claude-sonnet-4-20250514
 ```
 
-To disable audits: `@no_audit`
+To disable code reviews: `@no_review`
 
 ## Epic Directives
 
 | Directive | Description |
 |---|---|
-| `@audit_after_sprint` | Enable post-sprint audit (default: enabled) |
-| `@no_audit` | Disable post-sprint audit |
-| `@max_audit_iterations <N>` | Maximum outer audit cycles per sprint (default: 3) |
-| `@audit_engine <codex\|claude>` | AI engine for audit/fix sessions (default: same as `@engine`) |
-| `@audit_model <model>` | Model override for audit/fix sessions |
+| `@review_after_sprint` | Enable post-sprint code review (default: enabled) |
+| `@no_review` | Disable post-sprint code review |
+| `@max_review_iterations <N>` | Maximum review iterations per sprint (default: 3) |
+| `@review_engine <codex\|claude\|ollama>` | AI engine for code review session (default: same as `@engine`) |
+| `@review_model <model>` | Model override for code review session |
 
 ## CLI Flags
 
 | Flag | Description |
 |---|---|
-| `--no-audit` | Disable sprint and build audits for this run |
+| `--no-audit` | Disable sprint code review and build audit for this run |
 
 ## Severity Classification
 
 | Level | Description (software) | Action | If unresolved |
 |---|---|---|---|
-| CRITICAL | Data loss, security breach, or crash under normal use | Fix agent remediates | **Blocks** sprint |
-| HIGH | Significant bug; affects core functionality | Fix agent remediates | **Blocks** sprint |
-| MODERATE | Edge case gaps, poor error handling, quality concerns | Fix agent remediates | Advisory warning |
-| LOW | Style, naming, cosmetic | Fix agent remediates (high/max effort) | Non-blocking |
+| CRITICAL | Data loss, security breach, or crash under normal use | Agent fixes in-session | **Blocks** sprint |
+| HIGH | Significant bug; affects core functionality | Agent fixes in-session | **Blocks** sprint |
+| MODERATE | Edge case gaps, poor error handling, quality concerns | Agent fixes in-session | Advisory warning |
+| LOW | Style, naming, cosmetic | Not fixed (accepted as-is) | Non-blocking |
 
-## Audit Criteria
+## Review Criteria
 
 ### Software and planning modes (default)
 
@@ -189,32 +151,52 @@ To disable audits: `@no_audit`
 5. **Structure** — Clear headings, logical ordering
 6. **Depth** — Sufficient detail and analysis
 
-## Audit Output Format
+## Review Output Format
 
-The audit agent writes findings to `.fry/sprint-audit.txt`:
+The agent writes findings to `.fry/sprint-review.txt`:
 
 ```
 ## Summary
-Brief overview of the audit results.
+Brief overview of the review results.
 
 ## Findings
 - **Location:** src/handler.go:42
 - **Description:** SQL query uses string concatenation instead of parameterized queries
 - **Severity:** HIGH
+- **Category:** product_defect
 - **Recommended Fix:** Use db.Query with $1 placeholders
 
 - **Location:** src/auth.go:15
 - **Description:** Variable name `x` is unclear
 - **Severity:** LOW
+- **Category:** product_defect
 - **Recommended Fix:** Rename to `tokenExpiry`
 
 ## Verdict
-FAIL (HIGH issues found)
+PASS (no issues or all LOW) or FAIL (CRITICAL/HIGH/MODERATE found)
+
+## Review Metadata
+- Iterations completed: 3
+- Convergence: CONVERGED | ITERATION_LIMIT
+
+## Review History
+### Pass 1
+Found: 2 CRITICAL, 1 HIGH, 0 MODERATE, 0 LOW
+Fixed: 2 CRITICAL, 1 HIGH, 0 MODERATE
+### Pass 2
+Found: 0 CRITICAL, 0 HIGH, 1 MODERATE, 0 LOW
+Fixed: 0 CRITICAL, 0 HIGH, 1 MODERATE
+### Pass 3
+Found: 0 CRITICAL, 0 HIGH, 0 MODERATE, 1 LOW
 ```
 
-If the agent forgets to write `.fry/sprint-audit.txt` but its output contains structured findings, Fry reconstructs the file and continues.
+If the agent fails to write `.fry/sprint-review.txt`, Fry attempts to recover findings from the agent's raw output. A quality gate prevents false positives from being accepted during recovery. When recovery is used, the result is flagged as recovered.
 
-## Context Provided to Audit Agent
+## Complexity Classification
+
+Before the review begins, Fry classifies the sprint diff complexity as `low`, `moderate`, or `high` based on heuristic analysis (numeric token density, table-row density, domain-specific signal keywords). Moderate and high complexity sprints receive an additional **figure reconciliation** check in the review prompt that instructs the agent to verify numerical claims against their source calculations.
+
+## Context Provided to the Review Agent
 
 | Context | Source | Limit |
 |---|---|---|
@@ -224,61 +206,41 @@ If the agent forgets to write `.fry/sprint-audit.txt` but its output contains st
 | Sprint goals | `@prompt` block from the epic | Full content |
 | What was done | `.fry/sprint-progress.txt` | First 50KB |
 | Code changes | `git diff` of sprint work | First 100KB |
-| Previously identified issues | Findings from prior audit cycles | Cycle 2+ only |
-| Resolved themes | Previously resolved findings | Cycle 2+ only |
-| Fix history | Summary of prior fix attempts and their outcomes (up to 15KB) | Cycle 2+ only |
 | Intentional divergences | `.fry/deviation-log.md` filtered to the active sprint | When relevant |
-
-## Context Provided to Fix Agent
-
-The fix prompt includes full audit context so the fix agent has the same understanding as the audit agent:
-
-| Context | Source |
-|---|---|
-| Target file content (inlined) | Actual file content for each finding's target files (up to 8 KB per file) |
-| Sprint goals | `@prompt` block from the epic |
-| Issues to fix | All unresolved findings, FIFO ordered (oldest first) |
-| Previous fix attempts | Prior attempts with verification notes |
-| Resolved themes | Do not re-break previously resolved issues |
-| Codebase context | Architecture guide and project learnings |
-
-The fix agent is instructed to focus on the listed issues and preserve unrelated behavior.
-
-## Context Provided to Verify Agent
-
-After each fix, a verify agent checks resolution:
-
-| Context | Source |
-|---|---|
-| Issues to verify | Numbered list of the current finding set with location, severity, and recommended fix |
-| Recent fix diff | Git diff from the fix agent's changes (up to 30KB) |
-| Instructions | Check each issue against the actual code and the fix diff. Report status per finding. Do not scan for new issues. |
-
-The verify agent does not look for new issues and does not modify source code.
 
 ## Effort Level Interaction
 
-- **`fast`** — Sprint audits are skipped entirely (unless `--always-verify` is passed).
-- **`standard`** — Bounded audit with complexity-aware caps. LOW findings excluded from fix scope.
-- **`high`** — Progress-based exit (continue while making progress, stop after 2 stale outer cycles). **LOW findings included** in fix scope.
-- **`max`** — Same as `high` but with larger safety caps. **LOW findings included** in fix scope. LOW-only findings get one fix attempt before accepting.
+- **`fast`** — Sprint code reviews are skipped entirely (unless `--always-verify` is passed).
+- **`standard`** — Default review iterations (3). LOW findings are non-blocking.
+- **`high`** — Default review iterations (3). LOW findings are noted at high effort.
+- **`max`** — Default review iterations (3). LOW findings are noted.
 
-### Complexity-Based Caps
+When `@max_review_iterations` is explicitly set, it overrides the default regardless of effort level.
 
-Iteration limits scale with the sprint diff complexity (low/moderate/high), not just effort level:
+## Metrics
 
-| Effort | Complexity | Outer Cycles | Inner Fix Iterations |
-|--------|-----------|-------------|---------------------|
-| standard | low | 2 | 3 |
-| standard | moderate | 3 | 3 |
-| standard | high | 5 | 3 |
-| high | low | 4 | 5 |
-| high | moderate | 8 | 5 |
-| high | high | 12 | 7 |
-| max | low | 6 | 7 |
-| max | moderate | 20 | 7 |
-| max | high | 100 | 10 |
+Review metrics track:
 
-At **high** and **max** effort, these caps are safety valves — the actual exit is governed by progress-based stale detection (2 consecutive outer cycles with no finding-set changes).
+- **Total calls** — 1 (single-session design)
+- **Duration** — wall-clock time for the review session
+- **Prompt bytes** — size of the assembled review prompt
+- **Output bytes** — size of the agent's response
+- **Model** — which model was used
+- **Final finding count** — number of findings after deduplication
+- **Content complexity** — classified complexity tier
 
-When `@max_audit_iterations` is explicitly set, it is always respected as the outer cycle cap regardless of effort level.
+These are written to `.fry/build-logs/sprintN_review_TIMESTAMP.log` and surfaced in `.fry/build-status.json` under `sprints[].audit`.
+
+## Relationship to Build Audit
+
+| Aspect | Sprint Code Review | Build Audit |
+|---|---|---|
+| Scope | Single sprint's changes | Entire codebase |
+| Timing | After each sprint passes sanity checks | After all sprints complete |
+| Agent design | Single session (review + fix in one call) | Single session (audit + fix in one call) |
+| Iterations | Up to `@max_review_iterations` (default: 3) | Up to 12 (standard/high) or 100 (max) |
+| Blocking | CRITICAL/HIGH block the sprint | Non-blocking (advisory) |
+| Output file | `.fry/sprint-review.txt` (transient) | `build-audit.md` (persisted) |
+| Context | Sprint diff + sprint progress | Full codebase + plan artifacts |
+
+Both use the same six criteria (mode-dependent) and four severity levels. The sprint code review catches issues incrementally during the build; the build audit catches cross-cutting issues that only become visible when viewing the completed project as a whole.

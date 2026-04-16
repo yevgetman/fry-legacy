@@ -88,7 +88,7 @@ Sprint 3/3: Polish ............. pending
 Latest: sprint_start (2/3) name=API
 ```
 
-When the active sprint is in a sprint-audit cycle, the dashboard adds a compact audit panel sourced from `.fry/build-status.json`:
+When the active sprint is in a code review cycle, the dashboard adds a compact review panel sourced from `.fry/build-status.json`:
 
 ```
 Fry Monitor                         PID 12345  10:27:18

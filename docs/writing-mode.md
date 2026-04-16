@@ -111,7 +111,7 @@ In writing mode, the audit agent evaluates each sprint's output against six cont
 | **Structure** | Clear headings, logical section ordering, effective use of lists and examples | MODERATE |
 | **Depth** | Sufficient detail and analysis; not superficial or padded | HIGH if shallow |
 
-The severity levels follow the same blocking rules as software mode: CRITICAL and HIGH block the sprint; MODERATE is advisory. See [Sprint Audit](sprint-audit.md) for the full audit mechanics.
+The severity levels follow the same blocking rules as software mode: CRITICAL and HIGH block the sprint; MODERATE is advisory. See [Sprint Code Review](sprint-audit.md) for the full review mechanics.
 
 ## Alignment
 
@@ -146,6 +146,6 @@ fry --mode planning
 
 - [Planning Mode](planning-mode.md) -- non-code document generation (analyses, strategies, plans)
 - [Sanity Checks](sanity-checks.md) -- check primitives and outcome matrix
-- [Sprint Audit](sprint-audit.md) -- post-sprint semantic review
+- [Sprint Code Review](sprint-audit.md) -- post-sprint semantic review
 - [Effort Levels](effort-levels.md) -- sprint count and rigor control
 - [Commands](commands.md) -- full CLI reference for `--mode` flag

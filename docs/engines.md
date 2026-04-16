@@ -202,11 +202,11 @@ Epic directives override the automatic tier selection for their session group:
 
 ```
 @model opus[1m]                # Overrides sprint execution + alignment + compaction + summary
-@audit_model sonnet            # Overrides audit + audit fix + audit verify + build audit + continue analysis
+@review_model sonnet            # Overrides sprint code review + build audit + continue analysis
 @review_model claude-sonnet-4-6  # Overrides review + replan
 ```
 
-The continue analysis session (`--continue`) uses `@audit_model` if set, otherwise falls back to `@model`.
+The continue analysis session (`--continue`) uses `@review_model` if set, otherwise falls back to `@model`.
 
 Or via `--model` flag for `fry replan`.
 
@@ -258,9 +258,9 @@ This means all Fry features (sprints, sanity checks, alignment, review) work ide
 
 ## Audit Session Continuity
 
-Fry supports explicit same-role session continuity for sprint audits on engines that expose resumable non-interactive sessions.
+Fry supports explicit same-role session continuity for build audits on engines that expose resumable non-interactive sessions. Sprint code reviews use a single session by design and do not need session continuity.
 
-| Engine | Sprint audit continuity | Mechanism |
+| Engine | Build audit continuity | Mechanism |
 |---|---|---|
 | Claude | Supported | Fry captures `session_id` from JSON output and resumes later audit/fix calls with `--resume <session-id>` |
 | Codex | Supported | Fry captures `thread_id` from JSONL output and resumes later audit/fix calls with `codex exec resume <thread-id>` |
@@ -273,7 +273,7 @@ Rules:
 - Session IDs are explicit and file-backed under `.fry/sessions/`; Fry does not rely on "most recent session" heuristics.
 - Same-role continuity is budgeted. Fry refreshes audit and fix sessions when they exceed per-role call, prompt-size, token, or carry-forward thresholds.
 - When Fry refreshes a session, the next same-role call starts from a fresh session and receives a compact carry-forward summary of unresolved findings plus recent failed fix attempts.
-- Sprint audit metrics record session refresh counts and refresh reasons in `.fry/build-logs/sprintN_audit_metrics.json` and surface the refresh count in `.fry/build-status.json`.
+- Build audit metrics record session refresh counts and refresh reasons in `.fry/build-logs/` and surface the refresh count in `.fry/build-status.json`.
 - If session capture or resume fails, Fry silently falls back to the existing stateless behavior.
 
 ## Rate-Limit Resilience

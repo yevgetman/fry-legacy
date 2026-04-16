@@ -10,7 +10,8 @@ internal/agent/             Agent foundation: domain types, build state reader, 
 internal/agentrun/          Shared dual-log execution harness for sprint and heal phases
 internal/archive/           Timestamped snapshots of .fry/ and build outputs into .fry-archive/
 internal/assets/            Supplementary assets scanner and content builder (prepare-only)
-internal/audit/             Post-sprint and post-build semantic audit (sprint audit loop + build audit)
+internal/audit/             Post-build semantic audit (build audit only)
+internal/codereview/        Post-sprint single-session code review (review + fix in one agent call)
 internal/cli/               Cobra command definitions (run, prepare, replan, init, exit, clean, status, identity, version, agent, events, team)
 internal/color/             ANSI color output with TTY detection and NO_COLOR support
 internal/config/            Constants: file paths, defaults, version string
@@ -132,7 +133,7 @@ User Input (plans/, media/, assets/, or --user-prompt)
        │   ├─ Sanity checks (verify/)
        │   ├─ Alignment loop (heal/ → agentrun/ → engine/ → verify/)
        │   ├─ Resume mode (sprint/runner.go → verify/ → heal/, --resume flag)
-       │   ├─ Sprint audit (audit/ → engine/)
+       │   ├─ Sprint code review (codereview/ → engine/)
        │   ├─ Git checkpoint (git/)
        │   ├─ Compact progress (sprint/compactor.go)
        │   └─ Sprint review (review/)

@@ -31,7 +31,7 @@ The build audit runs **before** the build summary so that audit results (pass/fa
 
 ## Single-Agent Iterative Design
 
-Unlike the sprint audit (which uses separate audit and fix agents), the build audit uses a **single agent session** that handles the full cycle:
+Like the sprint code review, the build audit uses a **single agent session** that handles the full cycle:
 
 1. **Audit** -- read the entire codebase and evaluate against six criteria
 2. **Classify** -- assign severity to each finding
@@ -61,7 +61,7 @@ The build audit runs only when **all** of these conditions are met:
 
 - All sprints completed successfully (no failures)
 - The full epic was executed (sprint 1 through the last sprint)
-- Audit is enabled (`@audit_after_sprint` or default; not `@no_audit`)
+- Audit is enabled (`@review_after_sprint` or default; not `@no_review`)
 - `--no-audit` flag was not passed
 - Effort level is not `fast`
 
@@ -141,14 +141,14 @@ The agent reads the actual codebase directly during its audit passes, so it has 
 
 ## Configuration
 
-The build audit shares configuration with the sprint audit. The same directives and flags control both:
+The build audit shares configuration with the sprint code review. The same directives and flags control both:
 
 | Directive / Flag | Effect on build audit |
 |---|---|
-| `@no_audit` | Disables both sprint and build audits |
-| `--no-audit` | Disables both sprint and build audits for this run |
-| `@audit_engine` | Engine used for the build audit agent |
-| `@audit_model` | Model used for the build audit agent |
+| `@no_review` | Disables sprint code review and build audit |
+| `--no-audit` | Disables sprint code review and build audit for this run |
+| `@review_engine` | Engine used for the build audit agent |
+| `@review_model` | Model used for the build audit agent |
 
 No additional directives are needed -- the build audit runs automatically when the epic completes successfully with auditing enabled.
 
@@ -220,8 +220,8 @@ When the build audit completes without blocking issues, Fry writes a sentinel fi
 - It is written for both the **full build audit** (all sprints complete) and the **triage single-pass audit**.
 - It **is** written when the audit finds only advisory (non-blocking) issues, since those do not prevent the build from being considered audited.
 - It is **not** written if the audit errors out, finds blocking issues, or is skipped with `--no-audit`.
-- When the epic is configured to skip auditing (e.g., `@no_audit` directive, or fast effort without `--always-verify`), the collector sets `BuildAuditComplete = true` so the analyzer never returns `AUDIT_INCOMPLETE` in the first place.
-- When `--no-audit` is passed as a CLI flag to `fry run --continue`, the collector still sees the audit as configured (because `@audit_after_sprint` is set in the epic) and the sentinel file is absent, so `HeuristicAnalyze` returns `AUDIT_INCOMPLETE`. The run command then handles this by skipping the audit phase and returning complete, rather than re-running the audit.
+- When the epic is configured to skip auditing (e.g., `@no_review` directive, or fast effort without `--always-verify`), the collector sets `BuildAuditComplete = true` so the analyzer never returns `AUDIT_INCOMPLETE` in the first place.
+- When `--no-audit` is passed as a CLI flag to `fry run --continue`, the collector still sees the audit as configured (because `@review_after_sprint` is set in the epic) and the sentinel file is absent, so `HeuristicAnalyze` returns `AUDIT_INCOMPLETE`. The run command then handles this by skipping the audit phase and returning complete, rather than re-running the audit.
 
 **Resume behavior:**
 
@@ -247,17 +247,17 @@ build_audit_20060102_150405.log
 
 ## Relationship to Sprint Audit
 
-| Aspect | Sprint Audit | Build Audit |
+| Aspect | Sprint Code Review | Build Audit |
 |---|---|---|
 | Scope | Single sprint's changes | Entire codebase |
 | Timing | After each sprint passes sanity checks | After all sprints complete |
-| Agent design | Two agents (audit + fix) | Single agent (audit + fix in one session) |
-| Iterations | Up to `@max_audit_iterations` (default: 3) | Up to 12 (standard/high) or 100 (max) |
+| Agent design | Single session (review + fix in one call) | Single session (audit + fix in one call) |
+| Iterations | Up to `@max_review_iterations` (default: 3) | Up to 12 (standard/high) or 100 (max) |
 | Blocking | CRITICAL/HIGH block the sprint | Non-blocking (advisory) |
-| Output file | `.fry/sprint-audit.txt` (transient) | `build-audit.md` (persisted) |
+| Output file | `.fry/sprint-review.txt` (transient) | `build-audit.md` (persisted) |
 | Context | Sprint diff + sprint progress | Full codebase + plan artifacts |
 
-Both audits use the same six criteria (mode-dependent) and four severity levels. The sprint audit catches issues incrementally during the build; the build audit catches cross-cutting issues that only become visible when viewing the completed project as a whole.
+Both use the same six criteria (mode-dependent) and four severity levels. The sprint code review catches issues incrementally during the build; the build audit catches cross-cutting issues that only become visible when viewing the completed project as a whole.
 
 ## Reporting Failure Distinction
 

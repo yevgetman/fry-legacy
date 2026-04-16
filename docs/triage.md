@@ -39,7 +39,7 @@ Simple and moderate tasks are **capped at high** — `--effort max` is automatic
 | **Model** | Standard | Standard | Frontier |
 | **Max iterations** | 12 | 20 | 25 |
 | **Alignment** | None | None | None |
-| **Sprint audit** | None | 1 audit+fix pass | 1 audit+fix pass |
+| **Sprint code review** | None | 1 review pass | 1 review pass |
 | **Build audit** | Single pass | Single pass | Single pass |
 
 ### Moderate (no prepare, auto-gen sanity checks, 1-2 sprints)
@@ -49,7 +49,7 @@ Simple and moderate tasks are **capped at high** — `--effort max` is automatic
 | **Model** | Standard | Standard | Frontier |
 | **Max iterations** | 12 | 20 | 25 |
 | **Alignment** | None | 3 attempts | 10 + progress detection |
-| **Sprint audit** | None | Default (3 outer, 3 inner) | Full (12 outer, 7 inner, progress-based) |
+| **Sprint code review** | None | Default (3 iterations) | Default (3 iterations) |
 | **Build audit** | Single pass | Single pass | Full |
 | **Sprints** | 1 | 1-2 | 1-2 |
 
@@ -118,7 +118,7 @@ For tasks classified as SIMPLE:
 - **Sprint**: 1 sprint, iterations set by effort level (12/20/25)
 - **Alignment**: disabled (`@max_heal_attempts 0`) at all effort levels
 - **Sanity checks**: skipped (no `verification.md` generated)
-- **Sprint audit**: skipped at fast; 1 audit+fix pass at standard/high (`@max_audit_iterations 1`)
+- **Sprint code review**: skipped at fast; 1 review pass at standard/high (`@max_review_iterations 1`)
 - **Build audit**: single pass after the sprint completes
 - **Git checkpoint**: runs normally
 
@@ -131,7 +131,7 @@ For tasks classified as MODERATE:
 - **Sprints**: 1-2 sprints (fast effort forces 1 sprint)
 - **Sanity checks**: auto-generated from detected build system (e.g. `go build && go test`, `npm test`, `cargo test`)
 - **Alignment**: effort-aware (none at fast, 3 at standard, 10 + progress detection at high)
-- **Sprint audit**: effort-aware (skipped at fast, default cycles at standard, full cycles at high)
+- **Sprint code review**: effort-aware (skipped at fast, default iterations at standard, default iterations at high)
 - **Build audit**: runs after sprint completion
 
 The auto-generated sanity checks are heuristic-only — they detect `go.mod`, `package.json`, `Cargo.toml`, `pyproject.toml`, `setup.py`, and `Makefile` and generate appropriate build+test commands.

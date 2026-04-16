@@ -19,7 +19,7 @@ For simple, well-bounded work: a single page, a config change, a small utility, 
 - Skips scaffolding as a separate sprint — folds it into Sprint 1
 - Sprint prompts omit REFERENCES and STUCK HINT sections for brevity
 - Sprint reviews are skipped entirely, even if `@review_between_sprints` is enabled
-- Sprint and build audits are skipped entirely for tasks going through the full prepare pipeline. Triaged tasks (simple/moderate) still receive a fallback build audit — see [Triage](triage.md) for the full matrix
+- Sprint code reviews and build audits are skipped entirely for tasks going through the full prepare pipeline. Triaged tasks (simple/moderate) still receive a fallback build audit — see [Triage](triage.md) for the full matrix
 - Focus is on core deliverables only; exhaustive edge cases are omitted
 
 ```bash
@@ -47,7 +47,7 @@ This is the current default behavior. For complex systems with databases, APIs, 
 - Full 7-part prompt structure with comprehensive detail
 - All standard sizing guidelines apply
 - Normal review behavior when enabled
-- Sprint audits use progress-based iteration: continue as long as the fix agent resolves issues or uncovers new ones. Safety caps scale with complexity (4/8/12 outer cycles, 5/7 inner fix iterations). Stops early after 2 consecutive stale outer cycles.
+- Sprint code review runs with default iterations (3). The single-session agent reviews, fixes above-LOW issues, and re-reviews until clean or the iteration limit is reached.
 
 ```bash
 fry --effort high --engine claude
@@ -60,7 +60,7 @@ fry --engine claude
 For high-stakes projects where correctness is paramount. Same sprint count as `high`, but with significantly more rigor per sprint.
 
 - Same sprint count as `high` (4-10), but with higher iteration budgets (30-50 per sprint)
-- Sprint audits use progress-based iteration (same as `high`): continue while the fix agent is making progress. Safety caps scale with complexity (6/20/100 outer cycles, 7/10 inner fix iterations). When only LOW findings remain, one fix attempt is made before accepting (prevents indefinite cycling on acknowledged LOWs)
+- Sprint code review runs with default iterations (3), same as `high`. LOW findings are noted but not fixed.
 - Sprint prompts are extended beyond the standard 7-part structure:
   - **Part 8: Analysis & Edge Cases** — enumerates every edge case, race condition, error scenario, and boundary condition
   - **Part 9: Quality Gates** — explicit quality criteria beyond sanity checks (performance targets, security considerations, code review checklist items)
@@ -112,7 +112,7 @@ When the [triage gate](triage.md) classifies a task, it also suggests an effort 
 **Simple and moderate tasks are capped at `high`** — if `--effort max` is passed or the triage classifier suggests max, it is automatically reduced to `high` with a log warning. Max effort is reserved for complex tasks that go through the full prepare pipeline.
 
 
-This means effort level now affects behavior within each difficulty grade. For example, a simple task at standard effort gets sprint auditing (1 audit+fix pass), while a simple task at fast effort skips auditing entirely. See [Triage — Difficulty × Effort Matrices](triage.md#difficulty--effort-matrices) for the full matrix.
+This means effort level now affects behavior within each difficulty grade. For example, a simple task at standard effort gets a sprint code review (1 review pass), while a simple task at fast effort skips code review entirely. See [Triage — Difficulty × Effort Matrices](triage.md#difficulty--effort-matrices) for the full matrix.
 
 ## Model Selection
 
@@ -198,7 +198,7 @@ When no effort level is set (auto-detect or unset), the default max iterations p
 | Prompt structure | Concise | Moderate 7-part | Full 7-part | Extended 9-part |
 | Scaffolding sprint | Merged into Sprint 1 | Normal | Normal | Normal |
 | Review behavior | Skipped | Normal | Normal | Thorough (lower DEVIATE threshold) |
-| Sprint audit | Skipped | Bounded (2-5 outer, 3 inner by complexity); LOW ignored | Progress-based (4-12 outer, 5-7 inner by complexity); LOW included | Progress-based (6-100 outer, 7-10 inner by complexity); LOW included; LOW-only → 1 fix then accept |
+| Sprint code review | Skipped | Default iterations (3); LOW non-blocking | Default iterations (3); LOW noted | Default iterations (3); LOW noted |
 | Build audit | Skipped | Runs on full epic completion | Runs on full epic completion | Runs on full epic completion |
 | No-op threshold | 2 iterations | 2 iterations | 2 iterations | 3 iterations |
 | Quality directive | No | Yes (check work + run build/test) | Yes (quality focus + run build/test) | Yes (full rigor + run build/test) |

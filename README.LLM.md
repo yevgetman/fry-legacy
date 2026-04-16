@@ -175,7 +175,7 @@ fry/
 │   │   ├── logevents.go         # Verbose synthetic events derived from build-log filenames
 │   │   ├── enrichment.go        # Pure event enrichment: elapsed times, sprint fractions, phase transitions
 │   │   ├── stream.go            # Monitor orchestrator: New, Run (continuous), Snapshot (one-shot)
-│   │   └── render.go            # Rendering: stream, dashboard (including live sprint-audit progress), log tail, waiting/ended messages
+│   │   └── render.go            # Rendering: stream, dashboard (including live sprint code review progress), log tail, waiting/ended messages
 │   ├── team/
 │   │   ├── runtime.go           # Team lifecycle: Start, Resume, Shutdown, Scale
 │   │   ├── types.go             # Config, Task, WorkerIdentity, WorkerRecord, StartOptions, IsolationMode
@@ -228,9 +228,9 @@ fry/
 | `build-mode.txt` | Persisted build mode (software/planning/writing) for `--continue` auto-detection |
 | `deviation-log.md` | Deviations detected during sprint reviews |
 | `deferred-failures.md` | Sanity check failures below threshold, deferred to build audit |
-| `sprint-audit.txt` | Current sprint's audit findings (agent-written or recovered from structured stdout) |
-| `audit-prompt.md` | Assembled audit, fix, or verify prompt |
-| `sessions/` | Transient same-role audit session IDs for Claude/Codex continuity; refreshed automatically when continuity budgets are exceeded |
+| `sprint-review.txt` | Current sprint's code review findings (agent-written or recovered from transcript) |
+| `code-review-prompt.md` | Assembled sprint code review prompt |
+| `sessions/` | Transient session IDs for Claude/Codex continuity |
 | `validation-checklist.md` | Build-audit checklist synthesized from deferred failure analysis |
 | `review-prompt.md` | Assembled review prompt |
 | `summary-prompt.md` | Assembled summary prompt |
@@ -302,10 +302,13 @@ type Epic struct {
     ReviewBetweenSprints     bool
     ReviewEngine, ReviewModel string
     MaxDeviationScope        int
-    AuditAfterSprint         bool
-    MaxAuditIterations       int
+    ReviewAfterSprint        bool           // also synced to AuditAfterSprint for build-audit compat
+    MaxReviewIterations      int
+    MaxReviewIterationsSet   bool
+    AuditAfterSprint         bool           // transition field — synced with ReviewAfterSprint
+    MaxAuditIterations       int            // transition field — synced with MaxReviewIterations
     MaxAuditIterationsSet    bool
-    AuditEngine, AuditModel  string
+    AuditEngine, AuditModel  string         // used by build audit
     Sprints                  []Sprint
     TotalSprints             int
 }
@@ -408,20 +411,15 @@ For each sprint (startSprint → endSprint):
      │    └─ No-op detection (no git diff) → early exit
  11. Run sanity checks
  12. If checks fail: alignment loop (effort-level-aware: fast=skip, standard=3, high=up to 10 with progress detection, max=unlimited with progress detection)
- 13. Sprint audit (if enabled & effort != fast) — two-level loop:
-     │  ├─ Outer loop (audit cycles): audit agent reviews + verifies previous issues
-     │  ├─ Inner loop (fix iterations): fix agent → verify agent → repeat until resolved
-     │  ├─ Issues tracked per-finding, FIFO ordered (oldest first)
-     │  ├─ Sprint diff is classified as low/moderate/high complexity to adapt prompt emphasis and loop budgets
-     │  ├─ Fix agent receives all unresolved findings at once with inline target file content, fix history, and resolved themes; no mechanical scope validation — the verify agent (AI) confirms whether fixes are adequate
-     │  ├─ Fix loop skips verify on true no-op fix attempts (no file changes) and carries forward per-finding fix history
-     │  ├─ Audit prompts include relevant intentional divergences from `.fry/deviation-log.md`
-     │  ├─ Claude/Codex reuse same-role audit and fix sessions within the sprint audit; verify remains stateless
-     │  ├─ Audit/fix/build-audit prompts include `.fry-config/codebase.md` and codebase memories when present
-     │  ├─ If the agent forgets to write the audit file, Fry tries to recover a structured report from final stdout/log output before failing
-     │  ├─ Verify agent must emit explicit per-issue outcome statuses (for example `RESOLVED`, `BEHAVIOR_UNCHANGED`, `BLOCKED`); unrecoverable missing output fails the audit
-     │  ├─ Metrics are recorded per call and written to `.fry/build-logs/sprintN_audit_metrics.json`, including no-op rates, verify yield, per-cycle productivity summaries, and session refresh counts
-     │  └─ standard/high/max use effort+complexity-aware caps (falling back to legacy defaults when complexity is unknown)
+ 13. Sprint code review (if enabled & effort != fast) — single-session review:
+     │  ├─ Sprint diff classified as low/moderate/high complexity
+     │  ├─ Single engine.Run() call — agent self-loops internally:
+     │  │   review → classify findings → fix above-LOW → re-review → repeat
+     │  ├─ Agent writes findings to `.fry/sprint-review.txt` with metadata (iterations, convergence status)
+     │  ├─ Findings deduplicated by normalized location+description key
+     │  ├─ Review prompt includes codebase context, sprint goals, git diff, intentional divergences
+     │  ├─ If the agent fails to write the review file, Fry recovers findings from transcript (with quality gate)
+     │  └─ CRITICAL/HIGH block; MODERATE advisory; LOW non-blocking
  14. Git checkpoint commit
  15. Compact sprint progress → .fry/epic-progress.txt
  16. Write rolling sprint results → .fry/rolling-results.json
@@ -655,7 +653,7 @@ make clean     # rm -rf bin/
 | `sprint-execution.md` | Agent loop, prompt assembly, progress |
 | `sanity-checks.md` | Check primitives, format, outcome matrix |
 | `alignment.md` | Alignment loop mechanics |
-| `sprint-audit.md` | Per-sprint semantic review |
+| `sprint-audit.md` | Per-sprint code review (single-session) |
 | `build-audit.md` | Final holistic audit |
 | `sprint-review.md` | Mid-build review, replanning, deviations |
 | `docker.md` | Docker Compose lifecycle |
@@ -720,7 +718,7 @@ Epics are markdown files parsed by `epic/parser.go`. Global directives appear be
 @max_heal_attempts 3
 @review_between_sprints
 @review_engine claude
-@audit_after_sprint
+@review_after_sprint
 @verification .fry/verification.md
 
 @sprint 1

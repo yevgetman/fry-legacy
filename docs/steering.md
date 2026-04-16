@@ -52,7 +52,7 @@ Stop the build gracefully. The current unit of work finishes, Fry settles a safe
 1. You run `fry exit` (preferred), or send a legacy pause request via an OpenClaw channel
 2. `fry exit` writes `.fry/exit-request.json`; the legacy path writes `.fry/agent-pause`
 3. Fry honors the request at the next safe checkpoint:
-   end of the current iteration, alignment seam, sprint-audit seam, sprint boundary after compaction (including hold/review seams), or the final build-audit/build-summary seam before finalization
+   end of the current iteration, alignment seam, sprint code review seam, sprint boundary after compaction (including hold/review seams), or the final build-audit/build-summary seam before finalization
 4. Work is checkpointed when needed
 5. Fry writes `.fry/resume-point.json` with the exact sprint, phase, verdict, and recommended resume command
 6. A `build_paused` event is emitted

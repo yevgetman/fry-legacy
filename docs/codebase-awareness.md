@@ -50,7 +50,7 @@ When `.fry-config/codebase.md` exists, it is automatically used throughout the b
 | Integration Point | How |
 |-------------------|-----|
 | **Sprint prompts** | Layer 0.5 (CODEBASE CONTEXT) — injected before executive context |
-| **Sprint audit / fix / build-audit prompts** | Injected as architecture and convention context for audit and remediation |
+| **Sprint code review / build-audit prompts** | Injected as architecture and convention context for review and remediation |
 | **Prepare pipeline** | Included in plan, epic, and sanity check generation |
 | **Triage** | Included in complexity classification |
 | **File index** | Auto-refreshed on each `fry run` if stale |

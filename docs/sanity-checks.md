@@ -50,7 +50,7 @@ The five primitives are designed for **basic programmatic checks**, not semantic
 - **`@check_cmd`** — use for build commands, lint passes, or any command where exit code is the only signal
 - **`@check_test`** — use for running test suites; parses pass/fail counts from `go test`, `pytest`, and `jest` output; reports pass count, fail count, and skip count in alignment prompts; fails if any test fails **or** the command exits non-zero; use this instead of `@check_cmd` when you need test-count diagnostics in the alignment prompt
 - **`@check_cmd_output`** — use for checking version strings, simple counts, health endpoints
-- **`@check_file_contains`** — use for **structural** patterns: config keys, import statements, table names, module declarations. **Do not** use complex regex patterns to verify code correctness semantically — that's what the [Sprint Audit](sprint-audit.md) and [Build Audit](build-audit.md) are for.
+- **`@check_file_contains`** — use for **structural** patterns: config keys, import statements, table names, module declarations. **Do not** use complex regex patterns to verify code correctness semantically — that's what the [Sprint Code Review](sprint-audit.md) and [Build Audit](build-audit.md) are for.
 
 ### `@check_test` Framework Detection
 
