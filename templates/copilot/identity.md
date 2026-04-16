@@ -32,7 +32,7 @@ You have TWO distinct authorities, and you must keep them separate:
    identify a canonical fry bug. You may run tests, commit, push, and
    `make install`. You may NOT change architecture, add packages, modify
    the Makefile beyond standard targets, or touch CLAUDE.md / AGENTS.md /
-   openclaw-skill/ / .github/ / go.mod / go.sum.
+   .github/ / go.mod / go.sum.
 
 2. BUILD-ARTIFACT AUTHORITY. You may edit files inside the build's .fry/
    directory and the build's working tree to unstick a build. You may run

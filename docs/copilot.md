@@ -184,7 +184,7 @@ fry copilot emit-event --type=<t> --data=<json>   # internal helper used BY the 
 ### Forbidden
 
 - New Go packages or `go get`
-- Editing `CLAUDE.md`, `AGENTS.md`, `.gitignore`, `.github/`, `openclaw-skill/`, `templates/identity/`, `Makefile`, `go.mod`, `go.sum`
+- Editing `CLAUDE.md`, `AGENTS.md`, `.gitignore`, `.github/`, `templates/identity/`, `Makefile`, `go.mod`, `go.sum`
 - `git push --force`, `git reset --hard`, `git rebase`, `git commit --amend`
 - Touching files outside the build dir, fry source dir, and `/tmp/copilot-*`
 - `--no-verify`, `--no-gpg-sign`

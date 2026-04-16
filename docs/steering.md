@@ -1,6 +1,6 @@
 # Build Steering
 
-Build steering lets you interact with a running Fry build through natural language via the OpenClaw skill (or any conversational interface). You can inject directives, pause for review, or abort and redirect -- without restarting the build from scratch.
+Build steering lets you interact with a running Fry build through file-based IPC. You can inject directives, pause for review, or abort and redirect — without restarting the build from scratch.
 
 ## The Three Tiers
 
@@ -13,8 +13,8 @@ Inject a note into the next iteration's prompt. The build doesn't stop. The spri
 **When to use**: "Focus on the API endpoints", "Don't forget to add rate limiting", "Use PostgreSQL not SQLite"
 
 **How it works**:
-1. You send a message via any OpenClaw channel
-2. The extension writes your directive to `.fry/agent-directive.md`
+1. You (or an external agent) write a directive
+2. The directive is written to `.fry/agent-directive.md`
 3. At the start of the next iteration, the sprint loop reads the file (atomic consume to prevent races)
 4. Your directive is injected as a "MID-BUILD USER DIRECTIVE" prompt section
 5. The file is deleted after reading
@@ -29,8 +29,8 @@ Pause after the current sprint completes. Review what was done and decide how to
 **When to use**: "Hold after this sprint, I want to review", "Pause before the next sprint"
 
 **How it works**:
-1. You send a hold request via any OpenClaw channel
-2. The extension writes an empty sentinel file `.fry/agent-hold-after-sprint`
+1. You (or an external agent) request a hold
+2. An empty sentinel file `.fry/agent-hold-after-sprint` is created
 3. After the current sprint completes (verified, healed, audited, checkpointed, compacted), the inter-sprint loop detects the hold
 4. A `decision_needed` event is emitted with a summary of the completed sprint
 5. The build blocks, waiting for your response
@@ -49,7 +49,7 @@ Stop the build gracefully. The current unit of work finishes, Fry settles a safe
 **When to use**: "Stop", "This is going in the wrong direction", "Pause the build"
 
 **How it works**:
-1. You run `fry exit` (preferred), or send a legacy pause request via an OpenClaw channel
+1. You run `fry exit` (preferred), or write the legacy pause sentinel file
 2. `fry exit` writes `.fry/exit-request.json`; the legacy path writes `.fry/agent-pause`
 3. Fry honors the request at the next safe checkpoint:
    end of the current iteration, alignment seam, sprint code review seam, sprint boundary after compaction (including hold/review seams), or the final build-audit/build-summary seam before finalization
@@ -62,16 +62,16 @@ Stop the build gracefully. The current unit of work finishes, Fry settles a safe
 
 ## File-Based IPC
 
-Steering uses files in the `.fry/` directory for communication between the extension and the sprint loop. No network protocols, no shared memory -- just files.
+Steering uses files in the `.fry/` directory for communication between external agents and the sprint loop. No network protocols, no shared memory — just files.
 
 | File | Purpose | Written By | Read By |
 |------|---------|-----------|---------|
-| `.fry/agent-directive.md` | User directive for the next iteration | OpenClaw agent | Sprint loop (consumed atomically) |
-| `.fry/agent-hold-after-sprint` | Hold sentinel (empty file) | OpenClaw agent | Inter-sprint loop |
-| `.fry/agent-pause` | Legacy pause sentinel (empty file) | OpenClaw agent | Sprint/alignment/audit control flow |
-| `.fry/exit-request.json` | Structured graceful-exit request | `fry exit` | Sprint/alignment/audit control flow |
+| `.fry/agent-directive.md` | User directive for the next iteration | External agent or human | Sprint loop (consumed atomically) |
+| `.fry/agent-hold-after-sprint` | Hold sentinel (empty file) | External agent or human | Inter-sprint loop |
+| `.fry/agent-pause` | Legacy pause sentinel (empty file) | External agent or human | Sprint/alignment/review control flow |
+| `.fry/exit-request.json` | Structured graceful-exit request | `fry exit` | Sprint/alignment/review control flow |
 | `.fry/resume-point.json` | Settled resume checkpoint (phase, sprint, verdict, command) | Fry runtime | `--continue`, `--simple-continue`, humans, agents |
-| `.fry/decision-needed.md` | Build waiting for human input (contains prompt) | Sprint loop | OpenClaw agent |
+| `.fry/decision-needed.md` | Build waiting for human input (contains prompt) | Sprint loop | External agent or human |
 
 All steering files are cleaned up automatically when the build completes (success or failure) to prevent stale files from affecting the next run. Prefer `fry exit` over writing `.fry/agent-pause` directly because the command resolves the canonical worktree state directory automatically.
 
@@ -99,7 +99,7 @@ Steering emits structured events to `.fry/observer/events.jsonl`:
 | `decision_received` | User responded to a hold | `preview` (first 200 chars) |
 | `build_paused` | Build stopped at a settled checkpoint | `sprint`, `phase`, `detail` |
 
-The OpenClaw agent can monitor these events via `fry events --follow --json` or by polling `fry status --json` and relay them as natural-language notifications to whatever messaging channel you're using.
+External agents can monitor these events via `fry events --follow --json` or by polling `fry status --json`.
 
 ## Atomicity and Race Safety
 

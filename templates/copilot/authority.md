@@ -16,7 +16,7 @@
 # failing the wake.
 #
 # This authority does NOT extend to: force-pushing fry to remote with
-# --force, modifying CLAUDE.md / AGENTS.md / openclaw-skill / .github,
+# --force, modifying CLAUDE.md / AGENTS.md / .github,
 # adding new Go packages or modules to fry (no `go get`), changing fry's
 # CLI surface beyond tactical bug fixes, deploying anything outside of
 # `make install`, touching shared infrastructure.

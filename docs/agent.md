@@ -1,119 +1,12 @@
 # Agent Foundation
 
-Fry includes an agent foundation layer (`internal/agent/`) that provides the building blocks for conversational interfaces to the Fry build engine. The agent package is consumed by:
-
-1. **The OpenClaw skill** (`openclaw-skill/`) — a markdown-based skill that teaches an OpenClaw agent how to use the Fry CLI
-2. **Future native agent** — via direct Go imports (planned)
-
-## Connecting OpenClaw to Fry
-
-OpenClaw integration uses a **skill** — a documentation file (`SKILL.md`) that gets injected into the agent's prompt when relevant. The skill teaches the agent every Fry CLI command, flag, artifact path, and steering mechanism. No gateway plugins or code runs in the OpenClaw process.
-
-### Prerequisites
-
-- Fry binary installed and in your PATH (verify: `fry version`)
-- OpenClaw gateway running on your machine (verify: `openclaw health`)
-
-### Step 1: Install the skill
-
-Copy the skill into OpenClaw's managed skills directory:
-
-```bash
-mkdir -p ~/.openclaw/skills/fry
-cp /path/to/fry/openclaw-skill/SKILL.md ~/.openclaw/skills/fry/SKILL.md
-```
-
-Or install into the workspace skills directory (per-agent):
-
-```bash
-mkdir -p ~/.openclaw/workspace/skills/fry
-cp /path/to/fry/openclaw-skill/SKILL.md ~/.openclaw/workspace/skills/fry/SKILL.md
-```
-
-### Step 2: Restart the gateway
-
-```bash
-openclaw gateway restart
-```
-
-### Step 3: Verify
-
-Check that the skill loaded:
-
-```bash
-openclaw skills list
-```
-
-You should see the fry skill listed as `ready` with the frying pan emoji.
-
-### Step 4: Start a build
-
-From any messaging channel connected to OpenClaw:
-
-```
-start a build on ~/code/myproject with standard effort
-```
-
-The agent will use the Fry CLI to start the build, detaching it as a background process, and use `fry status --json` to monitor progress.
-
-### What the Skill Provides
-
-The skill teaches the OpenClaw agent how to:
-
-| Capability | How |
-|------------|-----|
-| **Set up projects** | `fry init`, create `plans/plan.md`, configure `assets/` and `media/` |
-| **Prepare builds** | `fry prepare` to generate epics, agent instructions, and sanity checks |
-| **Start builds** | `fry run` as a detached background process with appropriate flags |
-| **Monitor builds** | `fry status --json`, read logs, read progress files, stream events |
-| **Steer builds** | Write directives, hold after sprints, or stop gracefully with `fry exit` and structured resume points |
-| **Resume builds** | `fry run --continue`, `--simple-continue`, `--resume`, or `--sprint N` |
-| **Interpret results** | Read audit findings, review verdicts, build summaries |
-| **Use all modes** | Software, planning, and writing mode workflows |
-| **Replan** | `fry replan` after deviations or review verdicts |
-| **Clean up** | `fry clean` to archive completed builds |
-| **Consciousness** | `fry status --consciousness`, `fry reflect`, `fry identity` |
-
-### Skill Coverage
-
-The skill covers the full Fry CLI surface:
-
-- **All commands**: `run`, `prepare`, `replan`, `clean`, `init`, `status`, `events`, `exit`, `identity`, `reflect`
-- **All flags**: `--effort`, `--engine`, `--mode`, `--model`, `--git-strategy`, `--review`, `--no-audit`, `--continue`, `--resume`, `--simple-continue`, `--sprint`, `--user-prompt`, `--user-prompt-file`, `--mcp-config`, `--dry-run`, `--sarif`, `--json-report`, `--telemetry`, `--triage-only`, `--full-prepare`, `--always-verify`, `--verbose`, `--show-tokens`
-- **All build stages**: Triage, prepare, preflight, sprint execution, sanity checks, alignment, audit, review, build summary
-- **All steering tiers**: Whisper (directive), Hold (sprint boundary), Pause (graceful stop)
-- **All build modes**: Software, planning, writing
-- **All artifact paths**: Input files (`plans/`, `assets/`, `media/`), generated artifacts (`.fry/`), output files (`build-summary.md`, `build-audit.md`, `output/`)
-- **Epic format**: Global directives, sprint directives, sanity check types
-
-### Skill vs. Plugin
-
-The Fry integration was originally built as a TypeScript plugin (`openclaw-extension/`) that registered native tools in the OpenClaw gateway. This was replaced with a skill-based approach because:
-
-1. **Gateway stability**: External plugins have a known race condition with channel initialization in OpenClaw (see [openclaw/openclaw#56626](https://github.com/openclaw/openclaw/issues/56626)). Skills have zero gateway impact.
-2. **Simplicity**: A skill is a single markdown file. No dependencies, no build step, no TypeScript, no `node_modules`.
-3. **Equivalent capability**: The agent achieves the same results by running Fry CLI commands via its exec tool as it did with dedicated plugin tools. The CLI commands are identical.
-4. **One trade-off**: Skills cannot push proactive notifications. The plugin's build watcher spawned a background `fry events --follow` process that sent updates unprompted. With the skill, the agent monitors builds via polling (`fry status --json`) or when asked. A cron job can fill this gap.
-
-### Proactive Monitoring via Cron
-
-To replicate the plugin's proactive notifications, set up an OpenClaw cron job that polls build status:
-
-From any OpenClaw channel:
-
-```
-set up a cron job that runs every 60 seconds: check fry status --json
-for all active builds and notify me of any sprint completions, failures,
-or build completion
-```
-
----
+Fry includes an agent foundation layer (`internal/agent/`) that provides the building blocks for programmatic interfaces to the Fry build engine.
 
 ## CLI Commands
 
 ### `fry status --json`
 
-Returns structured JSON build state. Used by the OpenClaw agent to answer "how's the build going?" without parsing text output.
+Returns structured JSON build state.
 
 ```bash
 $ fry status --json --project-dir ~/code/myproject
@@ -189,7 +82,7 @@ Functions:
 
 ### `internal/steering/` — Build Steering (Layer 1)
 
-File-based IPC for mid-build human intervention. The skill teaches the OpenClaw agent to write steering files; `fry exit` writes a structured graceful-exit request; the runtime reads those signals and settles deterministic resume points. Atomic writes prevent partial directives or checkpoints.
+File-based IPC for mid-build intervention. The runtime reads steering signals and settles deterministic resume points. Atomic writes prevent partial directives or checkpoints.
 
 Functions:
 - **`ConsumeDirective(projectDir)`** — Atomically read and delete the directive file (rename + read + remove)
@@ -217,12 +110,12 @@ These files are created by the steering system:
 
 | File | Purpose | Written By | Read By |
 |------|---------|-----------|---------|
-| `.fry/agent-directive.md` | User directive for next iteration | OpenClaw agent (via skill) | Sprint loop |
-| `.fry/agent-hold-after-sprint` | Hold flag (sentinel) | OpenClaw agent (via skill) | Inter-sprint loop |
-| `.fry/agent-pause` | Legacy pause flag (sentinel) | OpenClaw agent (via skill) | Sprint/alignment/audit control flow |
+| `.fry/agent-directive.md` | User directive for next iteration | External agent or human | Sprint loop |
+| `.fry/agent-hold-after-sprint` | Hold flag (sentinel) | External agent or human | Inter-sprint loop |
+| `.fry/agent-pause` | Legacy pause flag (sentinel) | External agent or human | Sprint/alignment/review control flow |
 | `.fry/exit-request.json` | Structured graceful-exit request | `fry exit` | Runtime graceful-exit checkpoints |
 | `.fry/resume-point.json` | Settled resume checkpoint | Fry runtime | `--continue`, `--simple-continue`, humans, agents |
-| `.fry/decision-needed.md` | Build waiting for human input | Sprint loop | OpenClaw agent (via skill) |
+| `.fry/decision-needed.md` | Build waiting for human input | Sprint loop | External agent or human |
 
 ## Build Steering Events
 
@@ -232,13 +125,3 @@ These files are created by the steering system:
 | `decision_needed` | Build holding for user decision | `reason`, `completed_sprint`, `remaining_sprints` |
 | `decision_received` | User responded to hold | `preview` |
 | `build_paused` | Build stopped at a settled checkpoint | `sprint`, `phase`, `detail` |
-
----
-
-## Future: Native Agent
-
-The `internal/agent/` and `internal/steering/` packages are designed as the foundation for a native `fry agent` command that does not require OpenClaw. The path:
-
-1. **Done (Layer 0)**: Domain types, state readers, event streaming, artifact schema, prompt generation
-2. **Done (Layer 1)**: Build steering — file-based IPC for directives, holds, graceful exits, and structured resume points
-3. **Future**: LLM client (`internal/agent/llm/`), channel adapters (`internal/agent/channels/`), `fry agent` command

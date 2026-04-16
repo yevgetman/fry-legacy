@@ -13,7 +13,7 @@ import (
 // patterns.
 //
 // Used by:
-// - The OpenClaw extension (via `fry agent prompt`)
+// - `fry agent prompt` CLI command
 // - Any future native Fry agent (via direct Go import)
 func BuildAgentSystemPrompt() string {
 	var b strings.Builder

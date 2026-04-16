@@ -1,5 +1,5 @@
 // Package steering provides file-based IPC for mid-build human intervention.
-// The OpenClaw extension (or any agent) writes files; the sprint loop reads them.
+// External agents or humans write files; the sprint loop reads them.
 package steering
 
 import (

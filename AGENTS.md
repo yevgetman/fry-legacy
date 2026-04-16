@@ -98,8 +98,6 @@ This is not optional. When you add, modify, or remove a feature:
 
 4. **Templates** — If you change epic directives, sanity check syntax, or agent instructions, update the corresponding files in `templates/` (`epic-example.md`, `verification-example.md`, `GENERATE_EPIC.md`).
 
-5. **OpenClaw skill** (`openclaw-skill/SKILL.md`) — Update if the change affects CLI commands, flags, artifact paths, build steering, epic directives, build modes, effort levels, engine behavior, git strategies, sanity check types, audit interpretation, or any user-facing behavior that the OpenClaw agent needs to know about. This skill is the interface between Fry and conversational AI agents — it must reflect the current CLI surface accurately.
-
 ### Documentation style
 
 - Technical, concise, active voice, imperative mood for instructions

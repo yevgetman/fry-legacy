@@ -1,6 +1,6 @@
 // Package agent provides the domain types and interfaces for Fry's agent
-// foundation. It is consumed by the OpenClaw extension (via CLI commands) and
-// designed so a future native Fry agent can import it directly.
+// foundation. It is consumed via CLI commands and designed so a future native
+// Fry agent can import it directly.
 package agent
 
 import "time"

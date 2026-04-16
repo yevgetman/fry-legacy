@@ -12,7 +12,7 @@ clean:
 
 PREFIX ?= $(HOME)/.local
 
-install: build install-skill
+install: build
 	mkdir -p $(PREFIX)/bin
 	cp bin/fry $(PREFIX)/bin/fry
 	@if [ "$$(uname -s)" = "Darwin" ]; then \
@@ -21,11 +21,4 @@ install: build install-skill
 			exit 1; \
 		fi; \
 		codesign --force --sign - $(PREFIX)/bin/fry; \
-	fi
-
-install-skill:
-	@if [ -d $(HOME)/.openclaw ]; then \
-		mkdir -p $(HOME)/.openclaw/skills/fry; \
-		cp openclaw-skill/SKILL.md $(HOME)/.openclaw/skills/fry/SKILL.md; \
-		echo "Fry skill installed."; \
 	fi

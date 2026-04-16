@@ -426,7 +426,7 @@ On stop conditions 1–5: jump to FINAL SUMMARY (below).
 # Forbidden Actions
 
 - Architectural changes to fry: new Go packages, `go get`, interface changes
-- Modifying: CLAUDE.md, AGENTS.md, .gitignore, .github/, openclaw-skill/,
+- Modifying: CLAUDE.md, AGENTS.md, .gitignore, .github/,
   Makefile, templates/identity/, go.mod, go.sum
 - Rewriting sprint prompts in the build's epic
 - git push --force, --force-with-lease, git reset --hard, git clean -f,
